@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 import numpy as np
 
@@ -12,6 +12,16 @@ from casm.tools.shared.json_io import (
 from . import messages as msgs
 from . import methods as mthds
 from ._StructureMappingSearchOptions import StructureMappingSearchOptions
+
+
+class TPair:
+    def __init__(self, child_T: np.ndarray, parent_T: np.ndarray):
+        """A pair of transformation matrices for child and parent superstructures."""
+        self.child_T = child_T
+        """np.ndarray: Transformation matrix for the child superstructure."""
+
+        self.parent_T = parent_T
+        """np.ndarray: Transformation matrix for the parent superstructure."""
 
 
 class MappingSearchData:
@@ -69,6 +79,24 @@ class MappingSearchData:
         self.options_history: list[StructureMappingSearchOptions] = options_history
         """list[StructureMappingSearchOptions]: A history of options used by previous
         searches."""
+
+    @property
+    def parent_atom_count(self):
+        """np.array: The minimum number of atoms per parent unit cell of each type, in
+        order corresponding to `parent_atom_types`."""
+        if self.parent_structure is None:
+            raise ValueError(
+                "Error in MappingSearchData: `parent_atom_count` is not possible "
+                "when `parent_structure` is None. "
+            )
+
+        _atom_types = self.parent_atom_types
+        _atom_count = [0] * len(_atom_types)
+        for atom_type in self.parent_structure.atom_type():
+            index = _atom_types.index(atom_type)
+            if index >= 0:
+                _atom_count[index] += 1
+        return np.array(_atom_count)
 
     @property
     def parent_atom_types(self):
@@ -136,7 +164,7 @@ class MappingSearchData:
         order corresponding to `child_atom_types`."""
         _atom_types = self.child_atom_types
         _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
+        for atom_type in self.child.atom_type():
             index = _atom_types.index(atom_type)
             if index >= 0:
                 _atom_count[index] += 1
@@ -148,7 +176,7 @@ class MappingSearchData:
         order corresponding to `parent_atom_types`."""
         _atom_types = self.parent_atom_types
         _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
+        for atom_type in self.child.atom_type():
             index = _atom_types.index(atom_type)
             if index >= 0:
                 _atom_count[index] += 1
@@ -227,7 +255,7 @@ class MappingSearchData:
             return
         _allowed = [list([x]) for x in self.parent_structure.atom_type()]
         _child_types = self.child.atom_type()
-        for parent_site_index, child_atom_index in self.opt.forced_on.items():
+        for parent_site_index, child_atom_index in self.options.forced_on.items():
             child_type = _child_types[child_atom_index]
             if child_type not in _allowed[parent_site_index]:
                 msgs.invalid_forced_on_values_error(
@@ -249,7 +277,7 @@ class MappingSearchData:
         """
         if self.parent_structure is None:
             return
-        if self.opt.fix_parent:
+        if self.options.fix_parent:
             child_n_atoms = len(self.child.atom_type())
             parent_n_atoms = len(self.parent_structure.atom_type())
             if child_n_atoms != parent_n_atoms:
@@ -278,7 +306,7 @@ class MappingSearchData:
                 )
                 msgs.primitive_parent_notice()
         else:
-            parent = self.parent_structure
+            parent = self.parent_prim
             primitive_parent = xtal.make_primitive_prim(parent)
             if len(primitive_parent.occ_dof()) != len(parent.occ_dof()):
                 safe_dump(
@@ -343,6 +371,128 @@ class MappingSearchData:
         if self.options is not None:
             self.options_history.append(self.options)
             self.options = None
+
+    def make_supercell_pairs_for_parent_structure(
+        self,
+        child_T_generator: Callable[[], list[np.ndarray]],
+        parent_T_generator: Callable[[np.ndarray], list[np.ndarray]],
+    ) -> list[TPair]:
+        """Make a list of (T_child, T_parent) pairs for the search when a parent prim
+        is given.
+
+        Parameters
+        ----------
+        child_T_generator : Callable[[], list[np.ndarray]]
+            A generator function that yields transformation matrices for the child
+            superstructures. If None, only the child itself is used.
+        parent_T_generator : Callable[[np.ndarray], list[np.ndarray]]
+            A generator function that yields transformation matrices for the parent
+            superstructures for a given child transformation matrix.
+        Returns
+        -------
+        T_pairs: list[TPair]
+            List of child / parent supercell transformation matrix pairs.
+
+        """
+        # Results
+        T_pairs = []
+
+        child_atom_count_of_parent_type = self.child_atom_count_of_parent_types
+        parent_atom_count = self.parent_atom_count
+
+        # If parent_T_list is not provided, generate possible parent supercells for each
+        # child supercell
+        for child_T in child_T_generator():
+            child_vol = int(round(np.linalg.det(child_T)))
+            superchild_atom_count_of_parent_type = (
+                child_atom_count_of_parent_type * child_vol
+            )
+
+            unfiltered_parent_T_list = parent_T_generator(child_T)
+            for parent_T in parent_T_generator(child_T):
+                unfiltered_parent_T_list.append(parent_T)
+
+            # Filter parent_T_list based on the child atom counts and the
+            # min/max atom counts per parent unit cell
+            filtered_parent_T_list = []
+            for parent_T in unfiltered_parent_T_list:
+                parent_vol = int(round(np.linalg.det(parent_T)))
+
+                # Check if the superparent atom counts == superchild atom counts
+                if np.all(
+                    superchild_atom_count_of_parent_type
+                    == parent_atom_count * parent_vol
+                ):
+                    filtered_parent_T_list.append(parent_T)
+
+            # Add the (child_T, parent_T) pairs
+            for parent_T in filtered_parent_T_list:
+                T_pairs.append(TPair(child_T=child_T, parent_T=parent_T))
+
+        return T_pairs
+
+    def make_supercell_pairs_for_parent_prim(
+        self,
+        child_T_generator: Callable[[], list[np.ndarray]],
+        parent_T_generator: Callable[[np.ndarray], list[np.ndarray]],
+    ) -> list[TPair]:
+        """Make a list of (T_child, T_parent) pairs for the search when a parent prim
+        is given.
+
+        Parameters
+        ----------
+        child_T_generator : Callable[[], list[np.ndarray]]
+            A generator function that yields transformation matrices for the child
+            superstructures. If None, only the child itself is used.
+        parent_T_generator : Callable[[np.ndarray], list[np.ndarray]]
+            A generator function that yields transformation matrices for the parent
+            superstructures for a given child transformation matrix.
+        Returns
+        -------
+        T_pairs: list[TPair]
+            List of child / parent supercell transformation matrix pairs.
+
+        """
+        # Results
+        T_pairs = []
+
+        child_atom_count_of_parent_type = self.child_atom_count_of_parent_types
+        min_atom_count_per_parent_unitcell = self.min_atom_count_per_parent_unitcell
+        max_atom_count_per_parent_unitcell = self.max_atom_count_per_parent_unitcell
+
+        # If parent_T_list is not provided, generate possible parent supercells for each
+        # child supercell
+        for child_T in child_T_generator():
+            child_vol = int(round(np.linalg.det(child_T)))
+            superchild_atom_count_of_parent_type = (
+                child_atom_count_of_parent_type * child_vol
+            )
+
+            unfiltered_parent_T_list = parent_T_generator(child_T)
+            for parent_T in parent_T_generator(child_T):
+                unfiltered_parent_T_list.append(parent_T)
+
+            # Filter parent_T_list based on the child atom counts and the
+            # min/max atom counts per parent unit cell
+            filtered_parent_T_list = []
+            for parent_T in unfiltered_parent_T_list:
+                parent_vol = int(round(np.linalg.det(parent_T)))
+
+                # Check if the parent atom counts are within the min/max range
+                if np.all(
+                    superchild_atom_count_of_parent_type
+                    >= min_atom_count_per_parent_unitcell * parent_vol
+                ) and np.all(
+                    superchild_atom_count_of_parent_type
+                    <= max_atom_count_per_parent_unitcell * parent_vol
+                ):
+                    filtered_parent_T_list.append(parent_T)
+
+            # Add the (child_T, parent_T) pairs
+            for parent_T in filtered_parent_T_list:
+                T_pairs.append(TPair(child_T=child_T, parent_T=parent_T))
+
+        return T_pairs
 
     def to_dict(self):
         """Convert the search data to a Python dictionary.

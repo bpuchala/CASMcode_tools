@@ -17,7 +17,7 @@ def pretty_json(
     return xtal.pretty_json(data)
 
 
-def printpathstr(path):
+def printpathstr(path: os.PathLike):
     abspath = pathlib.Path(path).resolve()
     try:
         return str(abspath.relative_to(pathlib.Path.cwd()))
@@ -25,7 +25,7 @@ def printpathstr(path):
         return str(abspath)
 
 
-def read_required(path: pathlib.Path, gz: bool = False):
+def read_required(path: os.PathLike, gz: bool = False):
     path = pathlib.Path(path)
     if path.exists():
         if gz is True:
@@ -41,8 +41,8 @@ def read_required(path: pathlib.Path, gz: bool = False):
 
 
 def read_contents(
-    parent_dir: pathlib.Path,
-    relpath: pathlib.Path,
+    parent_dir: os.PathLike,
+    relpath: os.PathLike,
     default: typing.Any = None,
     quiet: bool = False,
 ):
@@ -50,10 +50,10 @@ def read_contents(
 
     Parameters
     ----------
-    parent_dir: pathlib.Path
+    parent_dir: os.PathLike
         The file path to a Monte Carlo run path directory
 
-    relpath: pathlib.Path
+    relpath: os.PathLike
         Relative path, referenced to parent_dir, of a file to open. The `parent_dir`
         directory may be tar gzipped, in which case this file is read from the archive.
 
@@ -99,7 +99,7 @@ def read_contents(
         return default
 
 
-def read_optional(path: pathlib.Path, default: typing.Any = None, gz: bool = False):
+def read_optional(path: os.PathLike, default: typing.Any = None, gz: bool = False):
     path = pathlib.Path(path)
     if path.exists():
         if gz is True:
@@ -111,7 +111,7 @@ def read_optional(path: pathlib.Path, default: typing.Any = None, gz: bool = Fal
     return default
 
 
-def read_cascading(paths: list[pathlib.Path], quiet: bool = False, gz: bool = False):
+def read_cascading(paths: list[os.PathLike], quiet: bool = False, gz: bool = False):
     """Find a required file that may be at multiple locations"""
     for path in paths:
         data = read_optional(path, gz=gz)
@@ -125,8 +125,13 @@ def read_cascading(paths: list[pathlib.Path], quiet: bool = False, gz: bool = Fa
     raise Exception("Required file does not exist")
 
 
+def remove_null(data: dict) -> dict:
+    """Remove keys with None values from a dictionary"""
+    return {k: v for k, v in data.items() if v is not None}
+
+
 def dump(
-    data, path: pathlib.Path, force: bool = False, quiet: bool = False, gz: bool = False
+    data, path: os.PathLike, force: bool = False, quiet: bool = False, gz: bool = False
 ):
     """Json dump with overwrite/skipping/write output messaging"""
 
@@ -155,7 +160,7 @@ def dump(
 
 def safe_dump(
     data,
-    path: pathlib.Path,
+    path: os.PathLike,
     force: bool = False,
     quiet: bool = False,
     gz: bool = False,
