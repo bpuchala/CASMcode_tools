@@ -1275,7 +1275,6 @@ def update_options_to_next_n_atoms(
     options: StructureMappingSearchOptions,
     results_dir: pathlib.Path,
 ):
-
     n_atoms_parent = len(self.parent.atom_type())
     n_atoms_child = len(self.child.atom_type())
     n_atoms_lcm = math.lcm(n_atoms_parent, n_atoms_child)
@@ -2086,6 +2085,7 @@ class StructureMappingSearch:
         _total_min_cost = self.opt.total_min_cost
         _total_max_cost = self.opt.total_max_cost
         _total_k_best = self.opt.total_k_best
+        _no_remove_mean_displacement = self.opt.no_remove_mean_displacement
         _enable_remove_mean_displacement = not self.opt.no_remove_mean_displacement
         _lattice_cost_weight = self.opt.lattice_cost_weight
         _lattice_mapping_min_cost = self.opt.lattice_mapping_min_cost
@@ -2106,7 +2106,7 @@ class StructureMappingSearch:
         _atom_to_site_cost_f = mapsearch.make_atom_to_site_cost
 
         ## Create a parent structure search data object.
-        parent_search_data = mapsearch.PrimSearchData(
+        prim_search_data = mapsearch.PrimSearchData(
             prim=parent_prim.xtal_prim,
             enable_symmetry_breaking_atom_cost=_enable_symmetry_breaking_atom_cost,
         )
@@ -2194,119 +2194,44 @@ class StructureMappingSearch:
                 infinity=_infinity,
                 cost_tol=_cost_tol,
             )
+            atom_mapping_step = AtomMappingStep(
+                search=search,
+                prim_search_data=prim_search_data,
+                child_structure_data=child_structure_data,
+                opt=AtomMappingOptions(
+                    no_remove_mean_displacement=_no_remove_mean_displacement,
+                    forced_on=_forced_on,
+                    forced_off=_forced_off,
+                ),
+            )
 
-            if self.opt.fix_parent:
-                lattice_mapping = mapmethods.map_lattices_without_reorientation(
-                    lattice1=parent_search_data.prim_lattice(),
-                    lattice2=child_structure_data.lattice(),
-                    transformation_matrix_to_super=parent_T,
-                )
-                F = lattice_mapping.deformation_gradient()
-                if _lattice_mapping_cost_method == "isotropic_strain_cost":
-                    lattice_cost = mapinfo.isotropic_strain_cost(
-                        deformation_gradient=F,
-                    )
-                elif _lattice_mapping_cost_method == "symmetry_breaking_strain_cost":
-                    lattice_cost = mapinfo.symmetry_breaking_strain_cost(
-                        deformation_gradient=F,
-                        lattice1_point_group=parent_search_data.prim_crystal_point_group(),
-                    )
-                else:
-                    raise ValueError(
-                        f"Unknown lattice mapping cost method: "
-                        f"{_lattice_mapping_cost_method}"
-                    )
-                lattice_mappings = [
-                    mapinfo.ScoredLatticeMapping(
-                        lattice_cost=lattice_cost,
-                        lattice_mapping=lattice_mapping,
-                    )
-                ]
-
-            else:
-                # Might be able to tighten lattice max cost limit:
-                _curr_search_max = _total_max_cost
-                if len(search_results) >= _total_k_best:
-                    _curr_search_max = search_results[-1].total_cost()
-
-                _curr_lattice_max = min(
-                    _lattice_mapping_max_cost,
-                    _curr_search_max / _lattice_cost_weight,
-                )
-
-                lattice_mappings = mapmethods.map_lattices(
-                    lattice1=parent.lattice(),
-                    lattice2=child_structure_data.lattice(),
-                    transformation_matrix_to_super=parent_T,
-                    lattice1_point_group=parent_search_data.prim_crystal_point_group(),
-                    lattice2_point_group=child_structure_data.structure_crystal_point_group(),
-                    min_cost=_lattice_mapping_min_cost,
-                    max_cost=_curr_lattice_max,
-                    cost_method=_lattice_mapping_cost_method,
-                    k_best=_lattice_mapping_k_best,
-                    reorientation_range=_lattice_mapping_reorientation_range,
+            lattice_mapping_step = LatticeMappingStep(
+                prim_search_data=prim_search_data,
+                child_structure_data=child_structure_data,
+                lattice_cost_weight=_lattice_cost_weight,
+                opt=LatticeMappingOptions(
+                    lattice_mapping_cost_method=_lattice_mapping_cost_method,
+                    lattice_mapping_min_cost=_lattice_mapping_min_cost,
+                    lattice_mapping_max_cost=_lattice_mapping_max_cost,
+                    lattice_mapping_k_best=_lattice_mapping_k_best,
+                    lattice_mapping_reorientation_range=_lattice_mapping_reorientation_range,
+                    fix_parent=self.opt.fix_parent,
                     cost_tol=_cost_tol,
-                )
+                ),
+            )
+
+            # Might be able to tighten lattice max cost limit:
+            curr_total_max_cost = _total_max_cost
+            if len(search_results) >= _total_k_best:
+                curr_total_max_cost = search_results[-1].total_cost()
+
+            lattice_mappings = lattice_mapping_step(
+                parent_T=parent_T,
+                curr_total_max_cost=curr_total_max_cost,
+            )
 
             for scored_lattice_mapping in lattice_mappings:
-                lattice_mapping_data = mapsearch.LatticeMappingSearchData(
-                    prim_data=parent_search_data,
-                    structure_data=child_structure_data,
-                    lattice_mapping=scored_lattice_mapping,
-                )
-
-                # Check if 'forced_on' values are valid.
-                if len(_forced_on) > 0:
-                    _allowed = lattice_mapping_data.supercell_allowed_atom_types()
-                    _child_types = child_structure_data.atom_type()
-                    for parent_site_index, child_atom_index in _forced_on.items():
-                        child_type = _child_types[child_atom_index]
-                        if child_type not in _allowed[parent_site_index]:
-                            raise ValueError(
-                                f"Invalid --forced-on values: "
-                                f"child atom {child_atom_index} (type={child_type}) "
-                                f"is not allowed to map to "
-                                f"parent site {parent_site_index} "
-                                f"(allowed types: {_allowed[parent_site_index]})"
-                            )
-
-                # for each lattice mapping, generate possible translations
-                if not _enable_remove_mean_displacement:
-                    # If mean displacement removal is disabled, then we need info
-                    # on which parent/atom mappings to force on. (We could also allow
-                    # generating every combination here.)
-                    if len(_forced_on) == 0:
-                        raise ValueError(
-                            "If --no-remove-mean-displacement is set, "
-                            "the --forced-on option must be set."
-                        )
-                    # If forced_on is set, also use parent/child pairs to generate
-                    # trial translations
-                    trial_translations = []
-                    parent_cart = parent_search_data.prim_site_coordinate_cart()
-                    child_cart = (
-                        lattice_mapping_data.atom_coordinate_cart_in_supercell()
-                    )
-                    for parent_index, child_index in _forced_on.items():
-                        trial_translations.append(
-                            parent_cart[:, parent_index] - child_cart[:, child_index]
-                        )
-                else:
-                    # Make a minimal set of trial translations
-                    trial_translations = mapsearch.make_trial_translations(
-                        lattice_mapping_data=lattice_mapping_data,
-                    )
-
-                # for each combination of lattice mapping and translation,
-                # make and insert a mapping solution (MappingNode)
-                for trial_translation in trial_translations:
-                    search.make_and_insert_mapping_node(
-                        lattice_cost=scored_lattice_mapping.lattice_cost(),
-                        lattice_mapping_data=lattice_mapping_data,
-                        trial_translation_cart=trial_translation,
-                        forced_on=_forced_on,
-                        forced_off=_forced_off,
-                    )
+                atom_mapping_step(scored_lattice_mapping)
 
             while search.size():
                 search.partition()
@@ -2630,3 +2555,247 @@ class StructureMappingSearch:
         print("Lattice cost weight:", self.opt.lattice_cost_weight)
         print(tabulate(data, headers=headers, tablefmt="grid"))
         print()
+
+
+class AtomMappingOptions:
+    def __init__(
+        self,
+        no_remove_mean_displacement: bool = False,
+        forced_on: Optional[dict[int, int]] = None,
+        forced_off: Optional[list[tuple[int, int]]] = None,
+    ):
+        self.no_remove_mean_displacement = no_remove_mean_displacement
+        self.forced_on = forced_on
+        self.forced_off = forced_off
+
+
+# A LatticeMappingOptions class,
+# for use by LatticeMappingStep.
+class LatticeMappingOptions:
+
+    def __init__(
+        self,
+        lattice_mapping_cost_method: str = "symmetry_breaking_strain_cost",
+        lattice_mapping_min_cost: float = 0.0,
+        lattice_mapping_max_cost: float = 1e20,
+        lattice_mapping_k_best: int = 10,
+        lattice_mapping_reorientation_range: int = 1,
+        fix_parent: bool = False,
+        cost_tol: float = 1e-5,
+    ):
+        self.lattice_mapping_cost_method = lattice_mapping_cost_method
+        self.lattice_mapping_min_cost = lattice_mapping_min_cost
+        self.lattice_mapping_max_cost = lattice_mapping_max_cost
+        self.lattice_mapping_k_best = lattice_mapping_k_best
+        self.lattice_mapping_reorientation_range = lattice_mapping_reorientation_range
+        self.fix_parent = fix_parent
+        self.cost_tol = cost_tol
+
+
+class LatticeMappingStep:
+    def __init__(
+        self,
+        prim_search_data: mapsearch.PrimSearchData,
+        child_structure_data: mapsearch.StructureSearchData,
+        lattice_cost_weight: float,
+        opt: LatticeMappingOptions,
+    ):
+        self.prim_search_data = prim_search_data
+        self.child_structure_data = child_structure_data
+        self.lattice_cost_weight = lattice_cost_weight
+        self.opt = opt
+
+    def run_without_reorientation(
+        self,
+        parent_T,
+    ):
+        prim_search_data = self.prim_search_data
+        child_structure_data = self.child_structure_data
+        lattice_mapping_cost_method = self.opt.lattice_mapping_cost_method
+
+        ###
+        lattice_mapping = mapmethods.map_lattices_without_reorientation(
+            lattice1=prim_search_data.prim_lattice(),
+            lattice2=child_structure_data.lattice(),
+            transformation_matrix_to_super=parent_T,
+        )
+        F = lattice_mapping.deformation_gradient()
+        if lattice_mapping_cost_method == "isotropic_strain_cost":
+            lattice_cost = mapinfo.isotropic_strain_cost(
+                deformation_gradient=F,
+            )
+        elif lattice_mapping_cost_method == "symmetry_breaking_strain_cost":
+            lattice_cost = mapinfo.symmetry_breaking_strain_cost(
+                deformation_gradient=F,
+                lattice1_point_group=prim_search_data.prim_crystal_point_group(),
+            )
+        else:
+            raise ValueError(
+                f"Unknown lattice mapping cost method: "
+                f"{lattice_mapping_cost_method}"
+            )
+        return [
+            mapinfo.ScoredLatticeMapping(
+                lattice_cost=lattice_cost,
+                lattice_mapping=lattice_mapping,
+            )
+        ]
+
+    def run_with_reorientation(
+        self,
+        parent_T,
+        curr_total_max_cost: float,
+    ):
+        prim_search_data = self.prim_search_data
+        child_structure_data = self.child_structure_data
+        lattice_cost_weight = self.lattice_cost_weight
+        lattice_mapping_cost_method = self.opt.lattice_mapping_cost_method
+        lattice_mapping_min_cost = self.opt.lattice_mapping_min_cost
+        lattice_mapping_max_cost = self.opt.lattice_mapping_max_cost
+        lattice_mapping_k_best = self.opt.lattice_mapping_k_best
+        lattice_mapping_reorientation_range = (
+            self.opt.lattice_mapping_reorientation_range
+        )
+        cost_tol = self.opt.cost_tol
+
+        ###
+
+        # # Might be able to tighten lattice max cost limit:
+        # _curr_search_max = total_max_cost
+        # if len(search_results) >= _total_k_best:
+        #     _curr_search_max = search_results[-1].total_cost()
+        #
+        _curr_lattice_max = min(
+            lattice_mapping_max_cost,
+            curr_total_max_cost / lattice_cost_weight,
+        )
+
+        return mapmethods.map_lattices(
+            lattice1=prim_search_data.prim_lattice(),
+            lattice2=child_structure_data.lattice(),
+            transformation_matrix_to_super=parent_T,
+            lattice1_point_group=prim_search_data.prim_crystal_point_group(),
+            lattice2_point_group=child_structure_data.structure_crystal_point_group(),
+            min_cost=lattice_mapping_min_cost,
+            max_cost=_curr_lattice_max,
+            cost_method=lattice_mapping_cost_method,
+            k_best=lattice_mapping_k_best,
+            reorientation_range=lattice_mapping_reorientation_range,
+            cost_tol=cost_tol,
+        )
+
+    def __call__(
+        self,
+        parent_T: np.ndarray,
+        curr_total_max_cost: float = 1e20,
+    ):
+        if self.opt.fix_parent:
+            return self.run_without_reorientation(parent_T=parent_T)
+
+        else:
+            return self.run_with_reorientation(
+                parent_T=parent_T,
+                curr_total_max_cost=curr_total_max_cost,
+            )
+
+
+class AtomMappingStep:
+    def __init__(
+        self,
+        search: mapsearch.MappingSearch,
+        prim_search_data: mapsearch.PrimSearchData,
+        child_structure_data: mapsearch.StructureSearchData,
+        opt: AtomMappingOptions,
+    ):
+        self.search = search
+        self.prim_search_data = prim_search_data
+        self.child_structure_data = child_structure_data
+        self.opt = opt
+
+    def __call__(
+        self,
+        scored_lattice_mapping,
+    ):
+        search = self.search
+        prim_search_data = self.prim_search_data
+        child_structure_data = self.child_structure_data
+        no_remove_mean_displacement = self.opt.no_remove_mean_displacement
+        forced_on = self.opt.forced_on
+        forced_off = self.opt.forced_off
+
+        # Make lattice mapping data
+        lattice_mapping_data = mapsearch.LatticeMappingSearchData(
+            prim_data=prim_search_data,
+            structure_data=child_structure_data,
+            lattice_mapping=scored_lattice_mapping,
+        )
+
+        # Check if 'forced_on' values are valid.
+        if len(forced_on) > 0:
+            _allowed = lattice_mapping_data.supercell_allowed_atom_types()
+            _child_types = child_structure_data.atom_type()
+            for parent_site_index, child_atom_index in forced_on.items():
+                child_type = _child_types[child_atom_index]
+                if child_type not in _allowed[parent_site_index]:
+                    raise ValueError(
+                        f"Invalid --forced-on values: "
+                        f"child atom {child_atom_index} (type={child_type}) "
+                        f"is not allowed to map to "
+                        f"parent site {parent_site_index} "
+                        f"(allowed types: {_allowed[parent_site_index]})"
+                    )
+
+        # Generate possible translations
+        if no_remove_mean_displacement:
+            # If mean displacement removal is disabled, then we need info
+            # on which parent/atom mappings to force on. (We could also allow
+            # generating every combination here.)
+            if len(forced_on) == 0:
+                raise ValueError(
+                    "If --no-remove-mean-displacement is set, "
+                    "the --forced-on option must be set."
+                )
+            # If forced_on is set, also use parent/child pairs to generate
+            # trial translations
+            trial_translations = []
+            parent_cart = prim_search_data.prim_site_coordinate_cart()
+            child_cart = lattice_mapping_data.atom_coordinate_cart_in_supercell()
+            for parent_index, child_index in forced_on.items():
+                trial_translations.append(
+                    parent_cart[:, parent_index] - child_cart[:, child_index]
+                )
+        else:
+            # Make a minimal set of trial translations
+            trial_translations = mapsearch.make_trial_translations(
+                lattice_mapping_data=lattice_mapping_data,
+            )
+
+        # For each combination of lattice mapping and translation,
+        # make and insert a mapping solution (MappingNode)
+        for trial_translation in trial_translations:
+            search.make_and_insert_mapping_node(
+                lattice_cost=scored_lattice_mapping.lattice_cost(),
+                lattice_mapping_data=lattice_mapping_data,
+                trial_translation_cart=trial_translation,
+                forced_on=forced_on,
+                forced_off=forced_off,
+            )
+
+
+#
+#
+# input: (T_child, T_parent)
+# input: existing results
+# input: parameters
+#
+# for each pair:
+#     make MappingSearch(max_total_cost, ...)
+#     make lattice mappings
+#     for each lattice mapping:
+#         make trial translations
+#         for each trial translation:
+#             make and insert mapping node
+#     search
+#     merge results
+#     write results
+#     update min/max cost
