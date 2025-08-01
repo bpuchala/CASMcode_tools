@@ -1,5 +1,6 @@
 """Methods used to implement ``casm-map``"""
 
+import math
 import os
 import sys
 import typing
@@ -31,6 +32,206 @@ def _suppress_output(func, *args, **kwargs):
             os.dup2(old_stderr_fd, sys.stderr.fileno())
             os.close(old_stdout_fd)
             os.close(old_stderr_fd)
+
+
+def ceildiv(a, b):
+    return -(a // -b)
+
+
+def floordiv(a, b):
+    return a // b
+
+
+def get_max_n_atoms_for_parent_structure(
+    max_n_atoms: typing.Optional[int],
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
+):
+    """Get the maximum number of atoms to use when generating supercells of the child
+    when the parent is provided as a structure.
+
+    Parameters
+    ----------
+    max_n_atoms : Optional[int]
+        If provided, use this value. Otherwise, use the least common multiple of the
+        number of atoms in the child and parent structures.
+
+    Returns
+    -------
+    max_n_atoms: int
+        The maximum number of atoms to use when generating supercells of the child.
+    """
+    if max_n_atoms is not None:
+        return max_n_atoms
+
+    n_atoms_parent = len(parent_structure.atom_type())
+    n_atoms_child = len(child.atom_type())
+    return math.lcm(n_atoms_parent, n_atoms_child)
+
+
+def get_max_n_atoms_for_parent_prim(
+    max_n_atoms: typing.Optional[int],
+    child: xtal.Structure,
+):
+    """Get the maximum number of atoms to use when generating supercells of the child
+    when the parent is provided as a prim.
+
+    Parameters
+    ----------
+    max_n_atoms : Optional[int]
+        If provided, use the maximum of this value and the number of atoms in the child.
+        Otherwise, use the number of atoms in the child structure.
+
+    Returns
+    -------
+    max_n_atoms: int
+        The maximum number of atoms to use when generating supercells of the child.
+    """
+    if max_n_atoms is not None:
+        return max(max_n_atoms, len(child.atom_type()))
+    else:
+        return len(child.atom_type())
+
+
+def make_child_to_parent_vol(
+    max_n_atoms: int,
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
+):
+    child_n_atoms = len(child.atom_type())
+    parent_n_atoms = len(parent_structure.atom_type())
+
+    child_to_parent_vol = {}
+    child_vol = 1
+    while child_vol * child_n_atoms <= max_n_atoms:
+        child_superstructure_n_atoms = child_n_atoms * child_vol
+        _vol = child_superstructure_n_atoms / parent_n_atoms
+
+        # if parent_vol is integer, then it is a valid supercell size:
+        if _vol.is_integer():
+            child_to_parent_vol[child_vol] = int(_vol)
+
+        child_vol += 1
+
+    return child_to_parent_vol
+
+
+def make_T_pairs_for_parent_structure(
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    min_n_atoms: int,
+    max_n_atoms: int,
+    child_T_list: typing.Optional[list[np.ndarray]] = None,
+    parent_T_list: typing.Optional[list[np.ndarray]] = None,
+):
+    """Make a list of (T_child, T_parent) pairs for the search when a parent structure
+    is given.
+
+    Parameters
+    ----------
+    parent_structure : xtal.Structure
+        The parent structure.
+    child : xtal.Structure
+        The child structure.
+    parent_prim : casmconfig.Prim
+        The primitive parent structure.
+    min_n_atoms : int
+        The minimum number of atoms in the superstructures that should be included
+        in the search.
+    max_n_atoms : Optional[int]
+        The maximum number of atoms in the superstructures that should be included
+        in the search.
+    child_T_list : Optional[list[np.ndarray]] = None
+        For the child superstructures, a list of transformation matrices
+        :math:`T_{2}` to use. If None, the child superstructures are enumerated
+        based on the `min_n_atoms` and `max_n_atoms` options.
+    parent_T_list : Optional[list[np.ndarray]] = None
+        For the parent superstructures, a list of transformation matrices
+        :math:`T_{1}` to use. If None, the parent superstructures are enumerated
+        based on the `min_n_atoms` and `max_n_atoms` options.
+
+    Returns
+    -------
+    T_pairs: list[tuple[np.ndarray, np.ndarray]]
+        List of (T_child, T_parent) pairs.
+
+    """
+    # Results, list of (T_child, T_parent) pairs
+    T_pairs = []
+
+    max_n_atoms = get_max_n_atoms_for_parent_structure(
+        max_n_atoms=max_n_atoms,
+        parent_structure=parent_structure,
+        child=child,
+    )
+
+    # Parameters
+    child_crystal_point_group = xtal.make_structure_crystal_point_group(child)
+    child_n_atoms = len(child.atom_type())
+    child_to_parent_vol = make_child_to_parent_vol(
+        max_n_atoms=max_n_atoms,
+        parent_structure=parent_structure,
+        child=child,
+    )
+
+    # If child_T_list is not provided, enumerate the child supercells
+    if child_T_list is None:
+        child_T_list = []
+
+        child_superlattices = xtal.enumerate_superlattices(
+            unit_lattice=child.lattice(),
+            point_group=child_crystal_point_group,
+            max_volume=floordiv(max_n_atoms, child_n_atoms),
+            min_volume=ceildiv(min_n_atoms, child_n_atoms),
+        )
+        for child_superlattice in child_superlattices:
+            child_T_list.append(
+                xtal.make_transformation_matrix_to_super(
+                    unit_lattice=child.lattice(),
+                    superlattice=child_superlattice,
+                )
+            )
+
+    # For each child superstructure...
+    for child_T in child_T_list:
+        child_vol = int(round(np.linalg.det(child_T)))
+
+        # If no valid parent volume, continue
+        if child_vol not in child_to_parent_vol:
+            continue
+        parent_vol = child_to_parent_vol[child_vol]
+
+        # Get the list of valid parent supercells
+        restricted_parent_T_list = []
+
+        # If parent_T_list is not provided, enumerate the parent supercells
+        if parent_T_list is None:
+            parent_superlattices = xtal.enumerate_superlattices(
+                unit_lattice=parent_structure.lattice(),
+                point_group=parent_prim.crystal_point_group.elements,
+                max_volume=parent_vol,
+                min_volume=parent_vol,
+            )
+            for parent_superlattice in parent_superlattices:
+                restricted_parent_T_list.append(
+                    xtal.make_transformation_matrix_to_super(
+                        unit_lattice=parent_structure.lattice(),
+                        superlattice=parent_superlattice,
+                    )
+                )
+
+        # If parent_T_list is provided, filter the parent supercells
+        else:
+            for parent_T in parent_T_list:
+                if int(round(np.linalg.det(parent_T))) == parent_vol:
+                    restricted_parent_T_list.append(parent_T)
+
+        # Add the (child_T, parent_T) pairs
+        for parent_T in restricted_parent_T_list:
+            T_pairs.append((child_T, parent_T))
+
+    return T_pairs
 
 
 def _get_symgroup_classification(

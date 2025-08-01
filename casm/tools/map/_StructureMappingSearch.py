@@ -2,7 +2,7 @@ import math
 import pathlib
 import sys
 import uuid
-from typing import Optional, Union
+from typing import Optional
 
 import numpy as np
 from tabulate import tabulate
@@ -18,216 +18,22 @@ from casm.tools.shared.json_io import (
     safe_dump,
 )
 
-from .methods import (
-    chain_is_in_orbit,
-    make_chain_orbit,
-    make_child_supercell_info,
-    make_child_transformation_matrix_to_super,
-    make_parent_supercell_info,
-    make_primitive_chain,
-    make_primitive_chain_orbit,
-    parent_supercell_size,
-)
-
-
-def ceildiv(a, b):
-    return -(a // -b)
-
-
-def floordiv(a, b):
-    return a // b
-
-
-def _get_max_n_atoms_for_parent_structure(
-    max_n_atoms: Optional[int],
-    parent_structure: xtal.Structure,
-    child: xtal.Structure,
-):
-    """Get the maximum number of atoms to use when generating supercells of the child
-    when the parent is provided as a structure.
-
-    Parameters
-    ----------
-    max_n_atoms : Optional[int]
-        If provided, use this value. Otherwise, use the least common multiple of the
-        number of atoms in the child and parent structures.
-
-    Returns
-    -------
-    max_n_atoms: int
-        The maximum number of atoms to use when generating supercells of the child.
-    """
-    if max_n_atoms is not None:
-        return max_n_atoms
-
-    n_atoms_parent = len(parent_structure.atom_type())
-    n_atoms_child = len(child.atom_type())
-    return math.lcm(n_atoms_parent, n_atoms_child)
-
-
-def _get_max_n_atoms_for_parent_prim(
-    max_n_atoms: Optional[int],
-    child: xtal.Structure,
-):
-    """Get the maximum number of atoms to use when generating supercells of the child
-    when the parent is provided as a prim.
-
-    Parameters
-    ----------
-    max_n_atoms : Optional[int]
-        If provided, use the maximum of this value and the number of atoms in the child.
-        Otherwise, use the number of atoms in the child structure.
-
-    Returns
-    -------
-    max_n_atoms: int
-        The maximum number of atoms to use when generating supercells of the child.
-    """
-    if max_n_atoms is not None:
-        return max(max_n_atoms, len(child.atom_type()))
-    else:
-        return len(child.atom_type())
-
-
-def _make_child_to_parent_vol(
-    max_n_atoms: int,
-    parent_structure: xtal.Structure,
-    child: xtal.Structure,
-):
-    child_n_atoms = len(child.atom_type())
-    parent_n_atoms = len(parent_structure.atom_type())
-
-    child_to_parent_vol = {}
-    child_vol = 1
-    while child_vol * child_n_atoms <= max_n_atoms:
-        child_superstructure_n_atoms = child_n_atoms * child_vol
-        _vol = child_superstructure_n_atoms / parent_n_atoms
-
-        # if parent_vol is integer, then it is a valid supercell size:
-        if _vol.is_integer():
-            child_to_parent_vol[child_vol] = int(_vol)
-
-        child_vol += 1
-
-    return child_to_parent_vol
-
-
-def _make_T_pairs_for_parent_structure(
-    parent_structure: xtal.Structure,
-    child: xtal.Structure,
-    parent_prim: casmconfig.Prim,
-    min_n_atoms: int,
-    max_n_atoms: int,
-    child_T_list: Optional[list[np.ndarray]] = None,
-    parent_T_list: Optional[list[np.ndarray]] = None,
-):
-    """Make a list of (T_child, T_parent) pairs for the search when a parent structure
-    is given.
-
-    Parameters
-    ----------
-    parent_structure : xtal.Structure
-        The parent structure.
-    child : xtal.Structure
-        The child structure.
-    parent_prim : casmconfig.Prim
-        The primitive parent structure.
-    min_n_atoms : int
-        The minimum number of atoms in the superstructures that should be included
-        in the search.
-    max_n_atoms : Optional[int]
-        The maximum number of atoms in the superstructures that should be included
-        in the search.
-    child_T_list : Optional[list[np.ndarray]] = None
-        For the child superstructures, a list of transformation matrices
-        :math:`T_{2}` to use. If None, the child superstructures are enumerated
-        based on the `min_n_atoms` and `max_n_atoms` options.
-    parent_T_list : Optional[list[np.ndarray]] = None
-        For the parent superstructures, a list of transformation matrices
-        :math:`T_{1}` to use. If None, the parent superstructures are enumerated
-        based on the `min_n_atoms` and `max_n_atoms` options.
-
-    Returns
-    -------
-    T_pairs: list[tuple[np.ndarray, np.ndarray]]
-        List of (T_child, T_parent) pairs.
-
-    """
-    # Results, list of (T_child, T_parent) pairs
-    T_pairs = []
-
-    max_n_atoms = _get_max_n_atoms_for_parent_structure(
-        max_n_atoms=max_n_atoms,
-        parent_structure=parent_structure,
-        child=child,
-    )
-
-    # Parameters
-    child_crystal_point_group = xtal.make_structure_crystal_point_group(child)
-    child_n_atoms = len(child.atom_type())
-    child_to_parent_vol = _make_child_to_parent_vol(
-        max_n_atoms=max_n_atoms,
-        parent_structure=parent_structure,
-        child=child,
-    )
-
-    # If child_T_list is not provided, enumerate the child supercells
-    if child_T_list is None:
-        child_T_list = []
-
-        child_superlattices = xtal.enumerate_superlattices(
-            unit_lattice=child.lattice(),
-            point_group=child_crystal_point_group,
-            max_volume=floordiv(max_n_atoms, child_n_atoms),
-            min_volume=ceildiv(min_n_atoms, child_n_atoms),
-        )
-        for child_superlattice in child_superlattices:
-            child_T_list.append(
-                xtal.make_transformation_matrix_to_super(
-                    unit_lattice=child.lattice(),
-                    superlattice=child_superlattice,
-                )
-            )
-
-    # For each child superstructure...
-    for child_T in child_T_list:
-        child_vol = int(round(np.linalg.det(child_T)))
-
-        # If no valid parent volume, continue
-        if child_vol not in child_to_parent_vol:
-            continue
-        parent_vol = child_to_parent_vol[child_vol]
-
-        # Get the list of valid parent supercells
-        restricted_parent_T_list = []
-
-        # If parent_T_list is not provided, enumerate the parent supercells
-        if parent_T_list is None:
-            parent_superlattices = xtal.enumerate_superlattices(
-                unit_lattice=parent_structure.lattice(),
-                point_group=parent_prim.crystal_point_group.elements,
-                max_volume=parent_vol,
-                min_volume=parent_vol,
-            )
-            for parent_superlattice in parent_superlattices:
-                restricted_parent_T_list.append(
-                    xtal.make_transformation_matrix_to_super(
-                        unit_lattice=parent_structure.lattice(),
-                        superlattice=parent_superlattice,
-                    )
-                )
-
-        # If parent_T_list is provided, filter the parent supercells
-        else:
-            for parent_T in parent_T_list:
-                if int(round(np.linalg.det(parent_T))) == parent_vol:
-                    restricted_parent_T_list.append(parent_T)
-
-        # Add the (child_T, parent_T) pairs
-        for parent_T in restricted_parent_T_list:
-            T_pairs.append((child_T, parent_T))
-
-    return T_pairs
+# from .methods import (
+#     _get_max_n_atoms_for_parent_prim,
+#     ceildiv,
+#     chain_is_in_orbit,
+#     floordiv,
+#     make_chain_orbit,
+#     make_child_supercell_info,
+#     make_child_transformation_matrix_to_super,
+#     make_parent_supercell_info,
+#     make_primitive_chain,
+#     make_primitive_chain_orbit,
+#     parent_supercell_size,
+# )
+from . import messages as msgs
+from . import methods as mthds
+from ._StructureMappingSearchOptions import StructureMappingSearchOptions
 
 
 class ParentVolumeSearchOptions:
@@ -542,7 +348,7 @@ def _make_T_pairs_for_parent_prim(
     # Results, list of (T_child, T_parent) pairs
     T_pairs = []
 
-    max_n_atoms = _get_max_n_atoms_for_parent_prim(
+    max_n_atoms = mthds.get_max_n_atoms_for_parent_prim(
         max_n_atoms=max_n_atoms,
         child=child,
     )
@@ -558,8 +364,8 @@ def _make_T_pairs_for_parent_prim(
         child_superlattices = xtal.enumerate_superlattices(
             unit_lattice=child.lattice(),
             point_group=child_crystal_point_group,
-            max_volume=floordiv(max_n_atoms, child_n_atoms),
-            min_volume=ceildiv(min_n_atoms, child_n_atoms),
+            max_volume=mthds.floordiv(max_n_atoms, child_n_atoms),
+            min_volume=mthds.ceildiv(min_n_atoms, child_n_atoms),
         )
         for child_superlattice in child_superlattices:
             child_T_list.append(
@@ -625,619 +431,6 @@ def _make_T_pairs_for_parent_prim(
     return T_pairs
 
 
-class StructureMappingSearchOptions:
-    """Options controlling the structure mapping search."""
-
-    def __init__(
-        self,
-        max_n_atoms: Optional[int] = None,
-        min_n_atoms: int = 1,
-        child_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
-        parent_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
-        total_min_cost: float = 0.0,
-        total_max_cost: float = 0.3,
-        total_k_best: int = 1,
-        no_remove_mean_displacement: bool = False,
-        fix_parent: bool = False,
-        lattice_mapping_min_cost: Optional[float] = 0.0,
-        lattice_mapping_max_cost: Optional[float] = 1e20,
-        lattice_mapping_k_best: Optional[int] = 10,
-        lattice_mapping_reorientation_range: Optional[int] = 1,
-        lattice_mapping_cost_method: str = "symmetry_breaking_strain_cost",
-        atom_mapping_cost_method: str = "symmetry_breaking_disp_cost",
-        forced_on: Optional[dict[int, int]] = None,
-        forced_off: Optional[list[tuple[int, int]]] = None,
-        lattice_cost_weight: float = 0.5,
-        cost_tol: Optional[float] = 1e-5,
-        deduplication_interpolation_factors: Optional[list[float]] = None,
-    ):
-        """
-
-        .. rubric:: Constructor
-
-        Parameters
-        ----------
-        max_n_atoms : Optional[int] = None
-            The maximum number of atoms in the superstructures that should be included
-            in the search. If None, the least common multiple of the number of atoms
-            in the child and parent structures.
-        min_n_atoms : int = 1
-            The minimum number of atoms in the superstructures that should be included
-            in the search.
-        child_transformation_matrix_to_super_list : Optional[list[np.ndarray]] = None
-            If provided, overrides the `min_n_atoms` and `max_n_atoms` options to
-            directly specify the transformation matrices to use for the child
-            superstructures.
-        parent_transformation_matrix_to_super_list : Optional[list[np.ndarray]] = None
-            If provided, only use the specified transformation matrices to create
-            parent superstructures. If None, the parent superstructures are
-            enumerated.
-        total_min_cost : float = 0.0
-            The minimum total cost mapping to include in search results.
-        total_max_cost : float = 0.3
-            The maximum total cost mapping to include in search results.
-        total_k_best : int = 1
-            Keep the `k_best` mappings with lowest total cost that also
-            satisfy the min/max cost criteria. Approximate ties with the
-            current `k_best`-ranked result are also kept.
-        no_remove_mean_displacement : bool = False
-            If True, do not remove the mean displacement from the atom mapping.
-        fix_parent : bool = False
-            If True, map to the parent structure as provided and skip searching over
-            parent superstructures and lattice reorientations. The deformation
-            gradient is still calculated and atom mapping is still performed. Only
-            allowed if the number of atoms in the parent structure is the same as
-            the number of atoms in the child structure.
-        lattice_mapping_min_cost : float = 0.0
-            Keep lattice mappings with cost >= min_cost. Used when
-            `map_lattices_with_reorientation` is True.
-        lattice_mapping_max_cost : float = 1e20
-            Keep results with cost <= max_cost. Used when
-            `map_lattices_with_reorientation` is True.
-        lattice_mapping_k_best : int = 10
-            If not None, then only keep the k-best results (i.e. k lattice mappings
-            with minimum cost) satisfying the min_cost and max_cost constraints.
-            If there are approximate ties, those will also be kept. Used when
-            `map_lattices_with_reorientation` is True.
-        lattice_mapping_reorientation_range : int = 1
-            The absolute value of the maximum element in the lattice mapping
-            reorientation matrix, :math:`N`. This determines how many equivalent
-            lattice vector reorientations are checked. Increasing the value results in
-            more checks. The value 1 is generally expected to be sufficient because
-            reduced cell lattices are compared internally.
-        lattice_mapping_cost_method : str = 'symmetry_breaking_strain_cost'
-            Selects the method used to calculate lattice mapping costs. Used when
-            `map_lattices_with_reorientation` is True. One of
-            "isotropic_strain_cost" or "symmetry_breaking_strain_cost".
-        atom_mapping_cost_method : str = 'symmetry_breaking_disp_cost'
-            Selects the method used to calculate atom mapping costs. One of
-            "isotropic_disp_cost" or "symmetry_breaking_disp_cost".
-        forced_on : Optional[dict[int, int]] = None
-            A map of assignments `parent_atom_index: child_atom_index` that are forced
-            on. Indices begin at 0. Requires that `fix_parent` is True.
-        forced_off : Optional[list[tuple[int, int]]] = None
-            A list of tuples of assignments `(parent_atom_index, child_atom_index) that
-            are forced off. Indices begin at 0. Requires that `fix_parent` is True.
-        lattice_cost_weight : float = 0.5
-            The weight of the lattice cost in the total structure mapping cost.
-        cost_tol : float = 1e-5
-            Tolerance for checking if mapping costs are approximately equal.
-        deduplication_interpolation_factors : Optional[list[float]] = None
-            Interpolation factors to use for deduplication. If None, the default value
-            ``[0.5, 1.0]`` is used.
-
-        """
-        self.min_n_atoms = min_n_atoms
-        self.max_n_atoms = max_n_atoms
-        self.child_transformation_matrix_to_super_list = (
-            child_transformation_matrix_to_super_list
-        )
-        self.parent_transformation_matrix_to_super_list = (
-            parent_transformation_matrix_to_super_list
-        )
-
-        self.total_min_cost = total_min_cost
-        self.total_max_cost = total_max_cost
-        self.total_k_best = total_k_best
-        self.no_remove_mean_displacement = no_remove_mean_displacement
-        self.fix_parent = fix_parent
-        self.lattice_mapping_min_cost = lattice_mapping_min_cost
-        self.lattice_mapping_max_cost = lattice_mapping_max_cost
-        self.lattice_mapping_k_best = lattice_mapping_k_best
-        self.lattice_mapping_reorientation_range = lattice_mapping_reorientation_range
-        self.lattice_mapping_cost_method = lattice_mapping_cost_method
-        self.atom_mapping_cost_method = atom_mapping_cost_method
-        self.forced_on = forced_on
-        self.forced_off = forced_off
-        self.lattice_cost_weight = lattice_cost_weight
-        self.cost_tol = cost_tol
-
-        # Deduplication options
-        if deduplication_interpolation_factors is None:
-            deduplication_interpolation_factors = [0.5, 1.0]
-        self.deduplication_interpolation_factors = deduplication_interpolation_factors
-
-    def to_dict(self):
-        return {
-            "min_n_atoms": self.min_n_atoms,
-            "max_n_atoms": self.max_n_atoms,
-            "child_transformation_matrix_to_super_list": (
-                [x.tolist() for x in self.child_transformation_matrix_to_super_list]
-                if self.child_transformation_matrix_to_super_list is not None
-                else None
-            ),
-            "parent_transformation_matrix_to_super_list": (
-                [x.tolist() for x in self.parent_transformation_matrix_to_super_list]
-                if self.parent_transformation_matrix_to_super_list is not None
-                else None
-            ),
-            "total_min_cost": self.total_min_cost,
-            "total_max_cost": self.total_max_cost,
-            "total_k_best": self.total_k_best,
-            "no_remove_mean_displacement": self.no_remove_mean_displacement,
-            "fix_parent": self.fix_parent,
-            "lattice_mapping_min_cost": self.lattice_mapping_min_cost,
-            "lattice_mapping_max_cost": self.lattice_mapping_max_cost,
-            "lattice_mapping_k_best": self.lattice_mapping_k_best,
-            "lattice_mapping_reorientation_range": self.lattice_mapping_reorientation_range,  # noqa: E501
-            "lattice_mapping_cost_method": self.lattice_mapping_cost_method,
-            "atom_mapping_cost_method": self.atom_mapping_cost_method,
-            "forced_on": (
-                [[key, value] for key, value in self.forced_on.items()]
-                if self.forced_on is not None
-                else None
-            ),
-            "forced_off": self.forced_off,
-            "lattice_cost_weight": self.lattice_cost_weight,
-            "cost_tol": self.cost_tol,
-            "deduplication_interpolation_factors": self.deduplication_interpolation_factors,  # noqa: E501
-        }
-
-    @staticmethod
-    def from_dict(data: dict):
-        return StructureMappingSearchOptions(
-            max_n_atoms=data["max_n_atoms"],
-            min_n_atoms=data["min_n_atoms"],
-            child_transformation_matrix_to_super_list=(
-                [np.array(x) for x in data["child_transformation_matrix_to_super_list"]]
-                if data["child_transformation_matrix_to_super_list"] is not None
-                else None
-            ),
-            parent_transformation_matrix_to_super_list=(
-                [
-                    np.array(x)
-                    for x in data["parent_transformation_matrix_to_super_list"]
-                ]
-                if data["parent_transformation_matrix_to_super_list"] is not None
-                else None
-            ),
-            total_min_cost=data["total_min_cost"],
-            total_max_cost=data["total_max_cost"],
-            total_k_best=data["total_k_best"],
-            no_remove_mean_displacement=data["no_remove_mean_displacement"],
-            fix_parent=data["fix_parent"],
-            lattice_mapping_min_cost=data["lattice_mapping_min_cost"],
-            lattice_mapping_max_cost=data["lattice_mapping_max_cost"],
-            lattice_mapping_k_best=data["lattice_mapping_k_best"],
-            lattice_mapping_reorientation_range=data[
-                "lattice_mapping_reorientation_range"
-            ],
-            lattice_mapping_cost_method=data["lattice_mapping_cost_method"],
-            atom_mapping_cost_method=data["atom_mapping_cost_method"],
-            forced_on=(
-                {x[0]: x[1] for x in data["forced_on"]}
-                if data["forced_on"] is not None
-                else None
-            ),
-            forced_off=(
-                [tuple(x) for x in data["forced_off"]]
-                if data["forced_off"] is not None
-                else None
-            ),
-            lattice_cost_weight=data["lattice_cost_weight"],
-            cost_tol=data["cost_tol"],
-            deduplication_interpolation_factors=data[
-                "deduplication_interpolation_factors"
-            ],
-        )
-
-
-class MappingSearchData:
-    def __init__(
-        self,
-        parent: Union[xtal.Structure, casmconfig.Prim],
-        child: xtal.Structure,
-        options: Optional[StructureMappingSearchOptions] = None,
-        mappings: list[mapinfo.ScoredStructureMapping] = [],
-        uuids: list[str] = [],
-        options_history: list[StructureMappingSearchOptions] = [],
-    ):
-
-        if isinstance(parent, xtal.Structure):
-            parent_structure = parent
-            xtal_prim = xtal.Prim.from_atom_coordinates(structure=parent)
-            parent_prim = casmconfig.Prim(xtal_prim)
-        elif isinstance(parent, casmconfig.Prim):
-            parent_structure = None
-            parent_prim = parent
-        else:
-            raise TypeError(
-                "Error in MappingSearchData: `parent` must be either a "
-                "libcasm.xtal.Structure or a libcasm.configuration.Prim."
-            )
-
-        self.parent_structure: Optional[xtal.Structure] = parent_structure
-        """Optional[xtal.Structure]: The parent structure, with lattice 
-        :math:`L_{1}`, if mapping to a particular structure."""
-
-        self.parent_prim: casmconfig.Prim = parent_prim
-        """casmconfig.Prim: The :class:`~libcasm.configuration.Prim` for the parent, 
-        which determines allowed occupants on each basis site."""
-
-        self.child: xtal.Structure = child
-        """Optional[xtal.Structure]: The child structure, with lattice :math:`L_{2}`."""
-
-        self.options: Optional[StructureMappingSearchOptions] = options
-        """Optional[StructureMappingSearchOptions]: Options for the current search."""
-
-        self.mappings: list[mapinfo.ScoredStructureMapping] = mappings
-        """list[mapinfo.ScoredStructureMapping]: The list of scored structure mappings
-        between the parent structure and the child superstructure."""
-
-        self.uuids: list[str] = uuids
-        """list[str]: A list of UUIDs for the mappings."""
-
-        self.options_history: list[StructureMappingSearchOptions] = options_history
-        """list[StructureMappingSearchOptions]: A history of options used by previous
-        searches."""
-
-    @property
-    def parent_atom_types(self):
-        """list[str]: The list of atom types in the parent structure, sorted."""
-        if self.parent_structure is not None:
-            parent_atom_types = set(self.parent_structure.atom_type())
-        else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            parent_atom_types = {name for site_dof in occ_dof for name in site_dof}
-        return sorted(list(parent_atom_types))
-
-    @property
-    def parent_atom_frac(self):
-        """Optional[np.ndarray]: The fraction of each atom type in the parent, in
-        order corresponding to `parent_atom_types`.
-
-        If `parent_structure` is None, or has no atoms, the value is None."""
-        if self.parent_structure is None:
-            return None
-        if len(self.parent_structure.atom_type()) == 0:
-            return None
-        _atom_types = self.parent_atom_types
-        _atom_count = [0] * len(_atom_types)
-        for atom_type in self.parent_structure.atom_type():
-            _atom_count[_atom_types.index(atom_type)] += 1
-        _atom_counts = np.array(_atom_count)
-        total = np.sum(_atom_counts)
-        return _atom_counts / total
-
-    @property
-    def min_atom_count_per_parent_unitcell(self):
-        """np.array: The minimum number of atoms per parent unit cell of each type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
-        _atom_count = [0] * len(_atom_types)
-        if self.parent_structure is not None:
-            for atom_type in self.parent_structure.atom_type():
-                _atom_count[_atom_types.index(atom_type)] += 1
-        else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            for site_dof in occ_dof:
-                if len(site_dof) == 1:
-                    _atom_count[_atom_types.index(site_dof[0])] += 1
-        return np.array(_atom_count)
-
-    @property
-    def max_atom_count_per_parent_unitcell(self):
-        """np.array: The maximum number of atoms per parent unit cell of each type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
-        _atom_count = [0] * len(_atom_types)
-        if self.parent_structure is not None:
-            for atom_type in self.parent_structure.atom_type():
-                _atom_count[_atom_types.index(atom_type)] += 1
-        else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            for site_dof in occ_dof:
-                for name in site_dof:
-                    _atom_count[_atom_types.index(name)] += 1
-        return np.array(_atom_count)
-
-    @property
-    def child_atom_count(self):
-        """np.array: The number of atoms in the child of each type, in
-        order corresponding to `child_atom_types`."""
-        _atom_types = self.child_atom_types
-        _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
-            index = _atom_types.index(atom_type)
-            if index >= 0:
-                _atom_count[index] += 1
-        return np.array(_atom_count)
-
-    @property
-    def child_atom_count_of_parent_types(self):
-        """np.array: The number of atoms in the child of each parent type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
-        _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
-            index = _atom_types.index(atom_type)
-            if index >= 0:
-                _atom_count[index] += 1
-        return np.array(_atom_count)
-
-    @property
-    def child_atom_types(self):
-        """list[str]: The list of atom types in the child structure, sorted."""
-        child_atom_types = set(self.child.atom_type())
-        return sorted(list(child_atom_types))
-
-    @property
-    def child_atom_frac(self):
-        """Optional[np.ndarray]: The fraction of each atom type in the child, in
-        order corresponding to `child_atom_types`.
-
-        If `child` has no atoms, return None."""
-        if len(self.child.atom_type()) == 0:
-            return None
-        _atom_types = self.child_atom_types
-        _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child.atom_type():
-            _atom_count[_atom_types.index(atom_type)] += 1
-        _atom_counts = np.array(_atom_count)
-        total = np.sum(_atom_counts)
-        return _atom_counts / total
-
-    def validate_atom_types(self):
-        """Validate parent and child atom types are consistent
-
-        If `parent_structure` is not None, check that the atom types in the parent
-        structure and child structure are the same.
-
-        If `parent_structure` is None, check that the atom types in the child structure
-        are a subset of the atom types in the parent prim.
-
-        If the check fails, print an error message and exit.
-
-        """
-        if self.parent_structure is not None:
-            if set(self.parent_atom_types) != set(self.child_atom_types):
-                atom_types_mismatch_error(self.parent_atom_types, self.child_atom_types)
-        else:
-            if not set(self.child_atom_types).issubset(set(self.parent_atom_types)):
-                atom_types_mismatch_error(self.parent_atom_types, self.child_atom_types)
-
-    def validate_atom_frac(self):
-        """Validate the parent and child atom fractions are consistent.
-
-        If `parent_structure` is not None, check that the atom fractions in the parent
-        structure and child structure are the same.
-        """
-        if self.parent_structure is not None:
-            if not np.allclose(self.parent_atom_frac, self.child_atom_frac, atol=1e-5):
-                atom_fraction_mismatch_error(
-                    self.parent_atom_frac, self.child_atom_frac
-                )
-
-    def validate_forced_on(self):
-        """Validate `forced_on` values, if the parent_structure is given
-
-        If `parent_structure` is not None, check that the `--forced-on` option maps
-        parent and child atoms of the same type.
-
-        If `parent_structure` is None, this method currently does nothing.
-
-        The `forced_on` values are also validated before atom mapping.
-
-        """
-        if self.parent_structure is None:
-            return
-        _allowed = [list([x]) for x in self.parent_structure.atom_type()]
-        _child_types = self.child.atom_type()
-        for parent_site_index, child_atom_index in self.opt.forced_on.items():
-            child_type = _child_types[child_atom_index]
-            if child_type not in _allowed[parent_site_index]:
-                invalid_forced_on_values_error(
-                    parent_site_index=parent_site_index,
-                    child_atom_index=child_atom_index,
-                    child_type=child_type,
-                    allowed_types=_allowed[parent_site_index],
-                )
-
-    def validate_fix_parent(self):
-        """Validate `fix_parent` option, if the parent_structure is given
-
-        If `parent_structure` is not None, check that the `--fix-parent` option is used
-        only when the number of atoms in the parent structure is the same as the number
-        of atoms in the child structure.
-
-        If `parent_structure` is None, this method currently does nothing.
-
-        """
-        if self.parent_structure is None:
-            return
-        if self.opt.fix_parent:
-            child_n_atoms = len(self.child.atom_type())
-            parent_n_atoms = len(self.parent_structure.atom_type())
-            if child_n_atoms != parent_n_atoms:
-                invalid_fix_parent_error()
-
-    def notify_if_non_primitive(self):
-        """Print a notice if the parent or child is not primitive, and write
-        the primitive form to a file.
-
-        If the parent is not primitive, write its primitive form to
-        `parent.primitive.json`. If parent_structure is not None, it is checked.
-        Otherwise, the parent_prim is checked.
-
-        If the child is not primitive, write its primitive form to
-        `child.primitive.json`.
-        """
-        if self.parent_structure is not None:
-            parent = self.parent_structure
-            primitive_parent = xtal.make_primitive_structure(parent)
-            if len(primitive_parent.atom_type()) != len(parent.atom_type()):
-                safe_dump(
-                    xtal.pretty_json(primitive_parent.to_dict()),
-                    path="parent.primitive.json",
-                    force=True,
-                    quiet=True,
-                )
-                primitive_parent_notice()
-        else:
-            parent = self.parent_structure
-            primitive_parent = xtal.make_primitive_prim(parent)
-            if len(primitive_parent.occ_dof()) != len(parent.occ_dof()):
-                safe_dump(
-                    xtal.pretty_json(primitive_parent.to_dict()),
-                    path="parent.primitive.json",
-                    force=True,
-                    quiet=True,
-                )
-                primitive_parent_notice()
-
-        primitive_child = xtal.make_primitive_structure(self.child)
-        if len(primitive_child.atom_type()) != len(self.child.atom_type()):
-            safe_dump(
-                xtal.pretty_json(primitive_child.to_dict()),
-                path="child.primitive.json",
-                force=True,
-                quiet=True,
-            )
-            primitive_child_notice()
-
-    def validate_n_atoms(self):
-        """Validate the min_n_atoms and max_n_atoms options.
-
-        If `child_transformation_matrix_to_super_list` is None, this does nothing
-        because the user has requested which child supercells to try mapping.
-
-        Otherwise, it checks that the `min_n_atoms` >= 1 and that `max_n_atoms` is
-        greater than or equal to `min_n_atoms`. If the user does not specify
-        `max_n_atoms` explicitly, it is computed using the least common multiple of the
-        number of atoms in the parent and child structures.
-
-        """
-        if self.options.child_transformation_matrix_to_super_list is None:
-
-            min_n_atoms = self.options.min_n_atoms
-            max_n_atoms = _get_max_n_atoms_for_parent_structure(
-                max_n_atoms=self.options.max_n_atoms,
-                parent_structure=self.parent_structure,
-                child=self.child,
-            )
-
-            # Validate the min/max number of atoms
-            if min_n_atoms < 1:
-                invalid_min_n_atoms_error(min_n_atoms=min_n_atoms)
-
-            if self.parent_structure is not None:
-
-                if max_n_atoms < min_n_atoms:
-                    computed_msg = (
-                        "(computed from lcm of atom counts)"
-                        if self.options.max_n_atoms is None
-                        else ""
-                    )
-                    invalid_max_n_atoms_error(
-                        min_n_atoms=min_n_atoms,
-                        max_n_atoms=max_n_atoms,
-                        computed_msg=computed_msg,
-                    )
-
-    def move_options_to_history(self):
-        """Move the current options to the options history."""
-        if self.options is not None:
-            self.options_history.append(self.options)
-            self.options = None
-
-    def to_dict(self):
-        """Convert the search data to a Python dictionary.
-
-        Notes
-        -----
-
-        This does not move the current options to the options history. Use
-        :func:`move_options_to_history` before calling this method if you want to
-        include the current options in the history.
-
-        Returns
-        -------
-        data: dict
-            A Python dict representation of the search data.
-
-        """
-        return {
-            "parent_structure": (
-                self.parent_structure.to_dict() if self.parent_structure else None
-            ),
-            "parent_prim": self.parent_prim.to_dict(),
-            "child": self.child.to_dict(),
-            "options": self.options.to_dict() if self.options else None,
-            "mappings": [mapping.to_dict() for mapping in self.mappings],
-            "uuids": self.uuids,
-            "options_history": [opt.to_dict() for opt in self.options_history],
-        }
-
-    @staticmethod
-    def from_dict(
-        self,
-        data: dict,
-    ):
-        """Create a MappingSearchData object from a Python dictionary.
-
-        Parameters
-        ----------
-        data: dict
-            A Python dict representation of the search data.
-
-        Returns
-        -------
-        search_data: MappingSearchData
-            The MappingSearchData object created from the dictionary.
-
-        """
-        parent_structure = (
-            xtal.Structure.from_dict(data["parent_structure"])
-            if data["parent_structure"] is not None
-            else None
-        )
-        parent_prim = casmconfig.Prim.from_dict(data["parent_prim"])
-        child = xtal.Structure.from_dict(data["child"])
-        options = (
-            StructureMappingSearchOptions.from_dict(data["options"])
-            if data["options"] is not None
-            else None
-        )
-        mappings = [
-            mapinfo.ScoredStructureMapping.from_dict(data=x, prim=parent_prim.xtal_prim)
-            for x in data["mappings"]
-        ]
-        uuids = data["uuids"]
-        options_history = [
-            StructureMappingSearchOptions.from_dict(data=x)
-            for x in data["options_history"]
-        ]
-
-        return MappingSearchData(
-            parent=parent_structure or parent_prim,
-            child=child,
-            options=options,
-            mappings=mappings,
-            uuids=uuids,
-            options_history=options_history,
-        )
-
-
 class SearchResult:
     def __init__(self):
         self.parent_structure: Optional[xtal.Structure] = None
@@ -1295,331 +488,6 @@ def update_options_to_next_n_atoms(
 
     options.max_n_atoms = next_max_n_atoms
     options.min_n_atoms = next_max_n_atoms
-
-
-def results_dir_exists_error(results_dir: pathlib.Path) -> None:
-    """Print an error message if the results directory already exists."""
-
-    error = f"""
-################################################################################
-# Error: Results directory already exists                                      #
-#                                                                              #
-# A directory already exists at the specified path.                            #
-#                                                                              #
-# To merge new results, use --merge. Otherwise, delete the existing directory  #
-# or specify a new one.                                                        #
-
---results-dir={results_dir}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def atom_types_mismatch_error(parent_atom_types, child_atom_types) -> None:
-    """Print an error message if the parent and child atom types do not match."""
-    error = f"""
-    ################################################################################
-    # Error: Child cannot map to parent due to atom types mismatch                 #
-    #                                                                              #
-    
-    - Parent atom types: {parent_atom_types}
-    - Child atom types: {child_atom_types}
-    
-    # Stopping...                                                                  #
-    ################################################################################
-    """
-    print(error)
-    sys.exit(1)
-
-
-def atom_fraction_mismatch_error(parent_atom_frac, child_atom_frac) -> None:
-    """Print an error message if the parent and child atom types do not match."""
-    error = f"""
-    ################################################################################
-    # Error: Parent and child structures have different atom fractions             #
-    #                                                                              #
-
-    - Parent atom fraction: {parent_atom_frac}
-    - Child atom fraction: {child_atom_frac}
-
-    # Stopping...                                                                  #
-    ################################################################################
-    """
-    print(error)
-    sys.exit(1)
-
-
-def invalid_forced_on_values_error(
-    parent_site_index: int,
-    child_atom_index: int,
-    child_type: str,
-    allowed_types: list[str],
-) -> None:
-    """Print an error message if the `--forced-on` option is used with invalid
-    values."""
-
-    error = f"""
-################################################################################
-# Error: Invalid --forced-on values                                            #
-#                                                                              #
-# The `--forced-on` option requires that the child atom type is allowed on the #
-# parent site.                                                                 #
-
-child_atom_index={child_atom_index}
-child_type={child_type}
-parent_site_index={parent_site_index}
-allowed_types={allowed_types}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def invalid_fix_parent_error() -> None:
-    """Print an error message if the `--fix-parent` option is used with a parent and
-    child structure that have different numbers of atoms."""
-
-    error = """
-################################################################################
-# Error: --fix-parent requires parent and child w/ same number of atoms.       #
-#                                                                              #
-# The `--fix-parent` option is used to map to the parent structure as          #
-# provided, without searching over parent superstructures and lattice          #
-# reorientations. It is only allowed if the number of atoms in the parent      #
-# structure is the same as the number of atoms in the child structure.         #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def different_parent_error(results_dir: pathlib.Path) -> None:
-    """When merging, print an error message if the parent has changed."""
-
-    error = """
-################################################################################
-# Error: parent structure has changed                                          #
-#                                                                              #
-# When using the --merge option, the parent structure must remain the same.    #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def different_child_error(results_dir: pathlib.Path) -> None:
-    """When merging, print an error message if the child has changed."""
-
-    error = """
-################################################################################
-# Error: child structure has changed                                           #
-#                                                                              #
-# When using the --merge option, the child structure must remain the same.     #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def different_lattice_mapping_cost_method_error() -> None:
-    """When merging, print an error message if the lattice mapping cost method has
-    changed."""
-
-    error = """
-################################################################################
-# Error: lattice mapping cost method has changed                               #
-#                                                                              #
-# When using the --merge option, the lattice mapping cost method must remain   #
-# the same.                                                                    #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def different_atom_mapping_cost_method_error() -> None:
-    """When merging, print an error message if the atom mapping cost method has
-    changed."""
-
-    error = """
-################################################################################
-# Error: atom mapping cost method has changed                                  #
-#                                                                              #
-# When using the --merge option, the atom mapping cost method must remain      #
-# the same.                                                                    #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def different_lattice_cost_weight_error() -> None:
-    """When merging, print an error message if the lattice cost weight has changed."""
-
-    error = """
-################################################################################
-# Error: lattice cost weight has changed                                       #
-#                                                                              #
-# When using the --merge option, the lattice cost weight must remain the same. #
-#                                                                              #
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def primitive_parent_notice() -> None:
-    """Write a notice to the console that the parent is not primitive."""
-
-    notice = """
-################################################################################
-# Notice: parent is not primitive                                              #
-# Writing primitive parent: parent.primitive.json                              #
-#                                                                              #
-# The parent is not primitive, and the search will continue with the           #
-# non-primitive parent structure. If you want to use the primitive parent,     #
-# please use the file `parent.primitive.json` instead.                         #
-################################################################################
-"""
-    print(notice)
-    sys.stdout.flush()
-
-
-def primitive_child_notice() -> None:
-    """Write a notice to the console that the child structure is not primitive."""
-
-    notice = """
-################################################################################
-# Notice: child is not primitive                                               #
-# Writing primitive child structure: child.primitive.json                      #
-#                                                                              #
-# The child structure is not primitive, and the search will continue with the  #
-# non-primitive child structure. If you want to use the primitive child,       #
-# please use the file `child.primitive.json` instead.                           #
-################################################################################
-"""
-    print(notice)
-    sys.stdout.flush()
-
-
-def invalid_min_n_atoms_error(min_n_atoms: int):
-    """Print an error message for invalid min_n_atoms."""
-
-    error = f"""
-################################################################################
-# Error: Invalid min_n_atoms                                                   #
-#                                                                              #
-# The value of min_n_atoms must be at least 1.                                 #
-#                                                                              #
-
---min-n-atoms={min_n_atoms}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def invalid_max_n_atoms_error(
-    min_n_atoms: int,
-    max_n_atoms: int,
-    computed_msg: str,
-):
-    """Print an error message for invalid max_n_atoms."""
-
-    error = f"""
-################################################################################
-# Error: Invalid max_n_atoms                                                   #
-#                                                                              #
-# The value of max_n_atoms must be greater than or equalt to min_n_atoms.      #
-# equal to the minimum.                                                        #
-
---min-n-atoms={min_n_atoms}
---max-n-atoms={max_n_atoms} {computed_msg}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def invalid_lattice_mapping_cost_method_error(method: str):
-    """Print an error message for invalid lattice mapping cost method."""
-
-    error = f"""
-################################################################################
-# Error: Invalid lattice mapping cost method                                   #
-#                                                                              #
-# The lattice mapping cost method must be one of:                              #
-# - 'isotropic_strain_cost'                                                    #
-# - 'symmetry_breaking_strain_cost'                                            #
-#                                                                              #
-
---lattice-cost-method={method}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def invalid_atom_mapping_cost_method_error(method: str):
-    """Print an error message for invalid atom mapping cost method."""
-
-    error = f"""
-################################################################################
-# Error: Invalid atom mapping cost method                                      #
-#                                                                              #
-# The atom mapping cost method must be one of:                                 #
-# - 'isotropic_disp_cost'                                                      #
-# - 'symmetry_breaking_disp_cost'                                              #
-#                                                                              #
-
---atom-cost-method={method}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
-
-
-def invalid_deduplication_interpolation_factors_error(dedup_factors):
-    """Print an error message for invalid deduplication interpolation factors."""
-
-    error = f"""
-################################################################################
-# Error: Invalid deduplication interpolation factors                           #
-#                                                                              #
-# The deduplication interpolation factors must be a list of floats.            #
-#                                                                              #
-
---dedup-interp-factors={dedup_factors}
-
-# Stopping...                                                                  #
-################################################################################
-"""
-    print(error)
-    sys.exit(1)
 
 
 class StructureMappingSearch:
@@ -1785,7 +653,7 @@ class StructureMappingSearch:
             for parent_site_index, child_atom_index in self.opt.forced_on.items():
                 child_type = _child_types[child_atom_index]
                 if child_type not in _allowed[parent_site_index]:
-                    invalid_forced_on_values_error(
+                    msgs.invalid_forced_on_values_error(
                         parent_site_index=parent_site_index,
                         child_atom_index=child_atom_index,
                         child_type=child_type,
@@ -1796,7 +664,7 @@ class StructureMappingSearch:
             child_n_atoms = len(child.atom_type())
             parent_n_atoms = len(parent.atom_type())
             if child_n_atoms != parent_n_atoms:
-                invalid_fix_parent_error()
+                msgs.invalid_fix_parent_error()
 
         else:
             # Print notice if parent or child are not primitive, and write the
@@ -1809,7 +677,7 @@ class StructureMappingSearch:
                     force=True,
                     quiet=True,
                 )
-                primitive_parent_notice()
+                msgs.primitive_parent_notice()
 
             primitive_child = xtal.make_primitive_structure(child)
             if len(primitive_child.atom_type()) != len(child.atom_type()):
@@ -1819,12 +687,12 @@ class StructureMappingSearch:
                     force=True,
                     quiet=True,
                 )
-                primitive_child_notice()
+                msgs.primitive_child_notice()
 
         if self.opt.child_transformation_matrix_to_super_list is None:
             # Validate the min/max number of atoms
             if self.opt.min_n_atoms < 1:
-                invalid_min_n_atoms_error(min_n_atoms=self.opt.min_n_atoms)
+                msgs.invalid_min_n_atoms_error(min_n_atoms=self.opt.min_n_atoms)
 
             _max_n_atoms = self._get_max_n_atoms(parent, child)
             if _max_n_atoms < self.opt.min_n_atoms:
@@ -1833,7 +701,7 @@ class StructureMappingSearch:
                     if self.opt.max_n_atoms is None
                     else ""
                 )
-                invalid_max_n_atoms_error(
+                msgs.invalid_max_n_atoms_error(
                     min_n_atoms=self.opt.min_n_atoms,
                     max_n_atoms=_max_n_atoms,
                     computed_msg=computed_msg,
@@ -1844,7 +712,7 @@ class StructureMappingSearch:
             "isotropic_strain_cost",
             "symmetry_breaking_strain_cost",
         ]:
-            invalid_lattice_mapping_cost_method_error(
+            msgs.invalid_lattice_mapping_cost_method_error(
                 self.opt.lattice_mapping_cost_method
             )
 
@@ -1853,14 +721,16 @@ class StructureMappingSearch:
             "isotropic_disp_cost",
             "symmetry_breaking_disp_cost",
         ]:
-            invalid_atom_mapping_cost_method_error(self.opt.atom_mapping_cost_method)
+            msgs.invalid_atom_mapping_cost_method_error(
+                self.opt.atom_mapping_cost_method
+            )
 
         # Validate that deduplication_interpolation_factors is a list of floats:
         dedup_factors = self.opt.deduplication_interpolation_factors
         if not isinstance(dedup_factors, list) or not all(
             isinstance(factor, float) for factor in dedup_factors
         ):
-            invalid_deduplication_interpolation_factors_error(dedup_factors)
+            msgs.invalid_deduplication_interpolation_factors_error(dedup_factors)
 
     def _make_T_pairs(
         self,
@@ -1921,8 +791,8 @@ class StructureMappingSearch:
             child_superlattices = xtal.enumerate_superlattices(
                 unit_lattice=child.lattice(),
                 point_group=child_crystal_point_group,
-                max_volume=floordiv(max_n_atoms, child_n_atoms),
-                min_volume=ceildiv(min_n_atoms, child_n_atoms),
+                max_volume=mthds.floordiv(max_n_atoms, child_n_atoms),
+                min_volume=mthds.ceildiv(min_n_atoms, child_n_atoms),
             )
             for child_superlattice in child_superlattices:
                 child_T_list.append(
@@ -2019,7 +889,7 @@ class StructureMappingSearch:
 
         if results_dir.exists():
             if merge is False:
-                results_dir_exists_error(results_dir=results_dir)
+                msgs.results_dir_exists_error(results_dir=results_dir)
                 sys.exit(1)
             else:
                 data = read_required(results_dir / "mappings.json")
@@ -2028,10 +898,10 @@ class StructureMappingSearch:
                 if alloy is False:
                     _last_parent = xtal.Structure.from_dict(data.get("parent"))
                     if not parent.is_equivalent_to(_last_parent):
-                        different_parent_error()
+                        msgs.different_parent_error()
                     _last_child = xtal.Structure.from_dict(data.get("child"))
                     if not child.is_equivalent_to(_last_child):
-                        different_child_error()
+                        msgs.different_child_error()
                 else:
                     # TODO validation
                     pass
@@ -2051,18 +921,18 @@ class StructureMappingSearch:
                     self.opt.lattice_mapping_cost_method
                     != last_options.lattice_mapping_cost_method
                 ):
-                    different_lattice_mapping_cost_method_error()
+                    msgs.different_lattice_mapping_cost_method_error()
                 if (
                     self.opt.atom_mapping_cost_method
                     != last_options.atom_mapping_cost_method
                 ):
-                    different_atom_mapping_cost_method_error()
+                    msgs.different_atom_mapping_cost_method_error()
                 if not math.isclose(
                     self.opt.lattice_cost_weight,
                     last_options.lattice_cost_weight,
                     abs_tol=1e-5,
                 ):
-                    different_lattice_cost_weight_error()
+                    msgs.different_lattice_cost_weight_error()
 
         if alloy is False:
             self.validate(parent, child)
@@ -2074,7 +944,7 @@ class StructureMappingSearch:
         if alloy is False:
             _max_n_atoms = self._get_max_n_atoms(parent, child)
         else:
-            _max_n_atoms = _get_max_n_atoms_for_parent_prim(
+            _max_n_atoms = mthds.get_max_n_atoms_for_parent_prim(
                 max_n_atoms=self.opt.max_n_atoms,
                 child=child,
             )
@@ -2352,7 +1222,7 @@ class StructureMappingSearch:
         f_chain = self.opt.deduplication_interpolation_factors
 
         def make_chain(structure_mapping):
-            return make_primitive_chain(
+            return mthds.make_primitive_chain(
                 parent_lattice=parent_prim.xtal_prim.lattice(),
                 child=child,
                 structure_mapping=structure_mapping,
@@ -2360,7 +1230,7 @@ class StructureMappingSearch:
             )
 
         def make_orbit(chain_prototype):
-            return make_chain_orbit(
+            return mthds.make_chain_orbit(
                 chain_prototype=chain_prototype,
                 parent_prim=parent_prim,
             )
@@ -2382,15 +1252,15 @@ class StructureMappingSearch:
             for smap_existing, chain_orbit_existing in zip(
                 search_results, chain_orbits
             ):
-                if chain_is_in_orbit(primitive_chain, chain_orbit_existing):
+                if mthds.chain_is_in_orbit(primitive_chain, chain_orbit_existing):
                     found_duplicate = True
                     break
                 i_duplicate += 1
 
             if found_duplicate:
                 smap_existing = search_results[i_duplicate]
-                scel_size_new = parent_supercell_size(smap_new)
-                scel_size_existing = parent_supercell_size(smap_existing)
+                scel_size_new = mthds.parent_supercell_size(smap_new)
+                scel_size_existing = mthds.parent_supercell_size(smap_existing)
 
                 prefer_new = False
                 if scel_size_new < scel_size_existing:
@@ -2504,7 +1374,7 @@ class StructureMappingSearch:
             latmap = smap.lattice_mapping()
             T_parent = latmap.transformation_matrix_to_super()
             parent_volume = abs(int(round(np.linalg.det(T_parent))))
-            T_child = make_child_transformation_matrix_to_super(
+            T_child = mthds.make_child_transformation_matrix_to_super(
                 parent_lattice=parent_prim.xtal_prim.lattice(),
                 child_lattice=child.lattice(),
                 structure_mapping=scored_structure_mapping,
@@ -2515,7 +1385,7 @@ class StructureMappingSearch:
             lattice_cost = f"{smap.lattice_cost():.{prec}f}"
             atom_cost = f"{smap.atom_cost():.{prec}f}"
 
-            chain_orbit = make_primitive_chain_orbit(
+            chain_orbit = mthds.make_primitive_chain_orbit(
                 parent_prim=parent_prim,
                 child=child,
                 structure_mapping=smap,
@@ -2523,14 +1393,14 @@ class StructureMappingSearch:
             )
             mult = len(chain_orbit)
 
-            parent_info = make_parent_supercell_info(
+            parent_info = mthds.make_parent_supercell_info(
                 structure_mapping=smap,
                 parent_prim=parent_prim,
             )
             parent_grp = parent_info["spacegroup_type"]["international_short"]
             fg_size = parent_info["factor_group_size"]
 
-            child_info = make_child_supercell_info(
+            child_info = mthds.make_child_supercell_info(
                 T_child=T_child,
                 child_prim=child_prim,
             )
