@@ -41,12 +41,14 @@ class ByVolume:
         self,
         child_T: np.ndarray,
     ):
-        parent_superlattices = xtal.enumerate_superlattices(
-            unit_lattice=self.parent_prim.xtal_prim.lattice(),
-            point_group=self.parent_prim.crystal_point_group.elements,
-            max_volume=self.max_parent_vol,
-            min_volume=self.min_parent_vol,
-        )
+        parent_superlattices = []
+        if self.min_parent_vol <= self.max_parent_vol:
+            parent_superlattices = xtal.enumerate_superlattices(
+                unit_lattice=self.parent_prim.xtal_prim.lattice(),
+                point_group=self.parent_prim.crystal_point_group.elements,
+                max_volume=self.max_parent_vol,
+                min_volume=self.min_parent_vol,
+            )
         for parent_superlattice in parent_superlattices:
             yield xtal.make_transformation_matrix_to_super(
                 unit_lattice=self.parent_prim.xtal_prim.lattice(),
@@ -120,15 +122,17 @@ class ByAtomsPerUnitcell:
         child_vol = int(round(np.linalg.det(child_T)))
         n_child_atoms = len(self.child.atom_type()) * child_vol
 
-        min_parent_vol = int(math.floor(n_child_atoms / self.max_atoms_per_unitcell))
-        max_parent_vol = int(math.ceil(n_child_atoms / self.min_atoms_per_unitcell))
+        min_parent_vol = int(math.ceil(n_child_atoms / self.max_atoms_per_unitcell))
+        max_parent_vol = int(math.floor(n_child_atoms / self.min_atoms_per_unitcell))
 
-        parent_superlattices = xtal.enumerate_superlattices(
-            unit_lattice=self.parent_prim.xtal_prim.lattice(),
-            point_group=self.parent_prim.crystal_point_group.elements,
-            max_volume=max_parent_vol,
-            min_volume=min_parent_vol,
-        )
+        parent_superlattices = []
+        if min_parent_vol <= max_parent_vol:
+            parent_superlattices = xtal.enumerate_superlattices(
+                unit_lattice=self.parent_prim.xtal_prim.lattice(),
+                point_group=self.parent_prim.crystal_point_group.elements,
+                max_volume=max_parent_vol,
+                min_volume=min_parent_vol,
+            )
         for parent_superlattice in parent_superlattices:
             yield xtal.make_transformation_matrix_to_super(
                 unit_lattice=self.parent_prim.xtal_prim.lattice(),

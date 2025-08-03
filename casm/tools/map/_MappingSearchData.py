@@ -1,3 +1,5 @@
+import math
+import uuid
 from typing import Callable, Optional, Union
 
 import numpy as np
@@ -80,6 +82,10 @@ class MappingSearchData:
         """list[StructureMappingSearchOptions]: A history of options used by previous
         searches."""
 
+        self._chain_orbits: Optional[list[list[xtal.Structure]]] = None
+        """Optional[list[list[xtal.Structure]]]: A list of chain orbits for the 
+        associated mappings, used for deduplication."""
+
     @property
     def parent_atom_count(self):
         """np.array: The minimum number of atoms per parent unit cell of each type, in
@@ -110,14 +116,15 @@ class MappingSearchData:
 
     @property
     def parent_atom_frac(self):
-        """Optional[np.ndarray]: The fraction of each atom type in the parent, in
+        """np.ndarray: The fraction of each atom type in the parent, in
         order corresponding to `parent_atom_types`.
 
         If `parent_structure` is None, or has no atoms, the value is None."""
         if self.parent_structure is None:
-            return None
-        if len(self.parent_structure.atom_type()) == 0:
-            return None
+            raise ValueError(
+                "Error in MappingSearchData: `parent_atom_frac` is not possible "
+                "when `parent_structure` is None. "
+            )
         _atom_types = self.parent_atom_types
         _atom_count = [0] * len(_atom_types)
         for atom_type in self.parent_structure.atom_type():
@@ -493,6 +500,129 @@ class MappingSearchData:
                 T_pairs.append(TPair(child_T=child_T, parent_T=parent_T))
 
         return T_pairs
+
+    def merge(
+        self,
+        new_mappings: list[mapinfo.ScoredStructureMapping],
+        k_best: int,
+        cost_tol: float,
+    ):
+        """Merge new mappings into the existing search data.
+
+        Notes
+        -----
+        New mappings that are symmetrically equivalent to existing mappings will
+        replace the existing mapping if the new mapping has a smaller
+        supercell size.
+
+
+        Parameters
+        ----------
+        new_mappings: list[mapinfo.ScoredStructureMapping]
+            A list of new scored structure mappings to merge into the search data.
+        k_best: int
+            The number of best mappings to keep after merging. Mappings approximately
+            equal to the k-th best mapping (within `cost_tol`) will also be kept.
+        cost_tol: float
+            The tolerance for comparing costs of mappings.
+        """
+        if len(self.uuids) != len(self.mappings):
+            raise ValueError(
+                "Error in MappingSearchData.merge: "
+                "`mappings` and `uuids` must have the same length."
+            )
+
+        # search_results = self.mappings
+
+        if self._chain_orbits is None:
+            self._chain_orbits = []
+
+        # Deduplicate the new results
+        f_chain = self.opt.deduplication_interpolation_factors
+
+        def make_chain(structure_mapping):
+            return mthds.make_primitive_chain(
+                parent_lattice=self.parent_prim.xtal_prim.lattice(),
+                child=self.child,
+                structure_mapping=structure_mapping,
+                f_chain=f_chain,
+            )
+
+        def make_orbit(chain_prototype):
+            return mthds.make_chain_orbit(
+                chain_prototype=chain_prototype,
+                parent_prim=self.parent_prim,
+            )
+
+        # Create chain orbits for existing mappings if not already done
+        while len(self._chain_orbits) < len(self.mappings):
+            smap = self.mappings[len(self._chain_orbits)]
+            self._chain_orbits.append(make_orbit(make_chain(smap)))
+
+        if len(new_mappings) == 0:
+            return
+
+        for i, smap_new in enumerate(new_mappings):
+            primitive_chain = make_chain(smap_new)
+
+            # Check for duplicates:
+            found_duplicate = False
+            i_duplicate = 0
+            for smap_existing, chain_orbit_existing in zip(
+                self.mappings, self._chain_orbits
+            ):
+                if mthds.chain_is_in_orbit(primitive_chain, chain_orbit_existing):
+                    found_duplicate = True
+                    break
+                i_duplicate += 1
+
+            if found_duplicate:
+                smap_existing = self.mappings[i_duplicate]
+                scel_size_new = mthds.parent_supercell_size(smap_new)
+                scel_size_existing = mthds.parent_supercell_size(smap_existing)
+
+                prefer_new = False
+                if scel_size_new < scel_size_existing:
+                    prefer_new = True
+
+                # prefer smaller volume mappings
+                if prefer_new:
+                    self.mappings[i_duplicate] = smap_new
+                    self.uuids[i_duplicate] = str(uuid.uuid4())
+                    self._chain_orbits[i_duplicate] = make_orbit(primitive_chain)
+                else:
+                    continue
+            else:
+                self.mappings.append(smap_new)
+                self.uuids.append(str(uuid.uuid4()))
+                self._chain_orbits.append(make_orbit(primitive_chain))
+
+        # Sort the search results and chain orbits, by total cost
+        isorted = [
+            x[0]
+            for x in sorted(enumerate(self.mappings), key=lambda x: x[1].total_cost())
+        ]
+        self.mappings = [self.mappings[i] for i in isorted]
+        self.uuids = [self.uuids[i] for i in isorted]
+        self._chain_orbits = [self._chain_orbits[i] for i in isorted]
+
+        # Keep only the k-best results
+        if len(self.mappings) > k_best:
+            next_index = k_best
+            while next_index < len(self.mappings):
+                next_cost = self.mappings[next_index].total_cost()
+                if math.isclose(
+                    self.mappings[k_best - 1].total_cost(), next_cost, abs_tol=cost_tol
+                ):
+                    next_index += 1
+                else:
+                    break
+
+            self.mappings = self.mappings[:(next_index)]
+            self.uuids = self.uuids[:(next_index)]
+            self._chain_orbits = self._chain_orbits[:(next_index)]
+
+        return
 
     def to_dict(self):
         """Convert the search data to a Python dictionary.

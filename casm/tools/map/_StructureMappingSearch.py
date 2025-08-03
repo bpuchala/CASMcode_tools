@@ -33,7 +33,11 @@ from casm.tools.shared.json_io import (
 # )
 from . import messages as msgs
 from . import methods as mthds
-from ._StructureMappingSearchOptions import StructureMappingSearchOptions
+from ._StructureMappingSearchOptions import (
+    AtomMappingStepOptions,
+    LatticeMappingStepOptions,
+    StructureMappingSearchOptions,
+)
 
 
 class SearchResult:
@@ -561,7 +565,7 @@ class StructureMappingSearch:
         _total_max_cost = self.opt.total_max_cost
         _total_k_best = self.opt.total_k_best
         _no_remove_mean_displacement = self.opt.no_remove_mean_displacement
-        _enable_remove_mean_displacement = not self.opt.no_remove_mean_displacement
+        _remove_mean_displacement = not self.opt.no_remove_mean_displacement
         _lattice_cost_weight = self.opt.lattice_cost_weight
         _lattice_mapping_min_cost = self.opt.lattice_mapping_min_cost
         _lattice_mapping_max_cost = self.opt.lattice_mapping_max_cost
@@ -665,7 +669,7 @@ class StructureMappingSearch:
                 atom_cost_f=_atom_cost_f,
                 total_cost_f=_total_cost_f,
                 atom_to_site_cost_f=_atom_to_site_cost_f,
-                enable_remove_mean_displacement=_enable_remove_mean_displacement,
+                enable_remove_mean_displacement=_remove_mean_displacement,
                 infinity=_infinity,
                 cost_tol=_cost_tol,
             )
@@ -673,8 +677,8 @@ class StructureMappingSearch:
                 search=search,
                 prim_search_data=prim_search_data,
                 child_structure_data=child_structure_data,
-                opt=AtomMappingOptions(
-                    no_remove_mean_displacement=_no_remove_mean_displacement,
+                opt=AtomMappingStepOptions(
+                    remove_mean_displacement=_remove_mean_displacement,
                     forced_on=_forced_on,
                     forced_off=_forced_off,
                 ),
@@ -684,12 +688,12 @@ class StructureMappingSearch:
                 prim_search_data=prim_search_data,
                 child_structure_data=child_structure_data,
                 lattice_cost_weight=_lattice_cost_weight,
-                opt=LatticeMappingOptions(
-                    lattice_mapping_cost_method=_lattice_mapping_cost_method,
-                    lattice_mapping_min_cost=_lattice_mapping_min_cost,
-                    lattice_mapping_max_cost=_lattice_mapping_max_cost,
-                    lattice_mapping_k_best=_lattice_mapping_k_best,
-                    lattice_mapping_reorientation_range=_lattice_mapping_reorientation_range,
+                opt=LatticeMappingStepOptions(
+                    cost_method=_lattice_mapping_cost_method,
+                    min_cost=_lattice_mapping_min_cost,
+                    max_cost=_lattice_mapping_max_cost,
+                    k_best=_lattice_mapping_k_best,
+                    reorientation_range=_lattice_mapping_reorientation_range,
                     fix_parent=self.opt.fix_parent,
                     cost_tol=_cost_tol,
                 ),
@@ -1032,48 +1036,13 @@ class StructureMappingSearch:
         print()
 
 
-class AtomMappingOptions:
-    def __init__(
-        self,
-        no_remove_mean_displacement: bool = False,
-        forced_on: Optional[dict[int, int]] = None,
-        forced_off: Optional[list[tuple[int, int]]] = None,
-    ):
-        self.no_remove_mean_displacement = no_remove_mean_displacement
-        self.forced_on = forced_on
-        self.forced_off = forced_off
-
-
-# A LatticeMappingOptions class,
-# for use by LatticeMappingStep.
-class LatticeMappingOptions:
-
-    def __init__(
-        self,
-        lattice_mapping_cost_method: str = "symmetry_breaking_strain_cost",
-        lattice_mapping_min_cost: float = 0.0,
-        lattice_mapping_max_cost: float = 1e20,
-        lattice_mapping_k_best: int = 10,
-        lattice_mapping_reorientation_range: int = 1,
-        fix_parent: bool = False,
-        cost_tol: float = 1e-5,
-    ):
-        self.lattice_mapping_cost_method = lattice_mapping_cost_method
-        self.lattice_mapping_min_cost = lattice_mapping_min_cost
-        self.lattice_mapping_max_cost = lattice_mapping_max_cost
-        self.lattice_mapping_k_best = lattice_mapping_k_best
-        self.lattice_mapping_reorientation_range = lattice_mapping_reorientation_range
-        self.fix_parent = fix_parent
-        self.cost_tol = cost_tol
-
-
 class LatticeMappingStep:
     def __init__(
         self,
         prim_search_data: mapsearch.PrimSearchData,
         child_structure_data: mapsearch.StructureSearchData,
         lattice_cost_weight: float,
-        opt: LatticeMappingOptions,
+        opt: LatticeMappingStepOptions,
     ):
         self.prim_search_data = prim_search_data
         self.child_structure_data = child_structure_data
@@ -1086,7 +1055,7 @@ class LatticeMappingStep:
     ):
         prim_search_data = self.prim_search_data
         child_structure_data = self.child_structure_data
-        lattice_mapping_cost_method = self.opt.lattice_mapping_cost_method
+        lattice_mapping_cost_method = self.opt.cost_method
 
         ###
         lattice_mapping = mapmethods.map_lattices_without_reorientation(
@@ -1124,13 +1093,11 @@ class LatticeMappingStep:
         prim_search_data = self.prim_search_data
         child_structure_data = self.child_structure_data
         lattice_cost_weight = self.lattice_cost_weight
-        lattice_mapping_cost_method = self.opt.lattice_mapping_cost_method
-        lattice_mapping_min_cost = self.opt.lattice_mapping_min_cost
-        lattice_mapping_max_cost = self.opt.lattice_mapping_max_cost
-        lattice_mapping_k_best = self.opt.lattice_mapping_k_best
-        lattice_mapping_reorientation_range = (
-            self.opt.lattice_mapping_reorientation_range
-        )
+        lattice_mapping_cost_method = self.opt.cost_method
+        lattice_mapping_min_cost = self.opt.min_cost
+        lattice_mapping_max_cost = self.opt.max_cost
+        lattice_mapping_k_best = self.opt.k_best
+        lattice_mapping_reorientation_range = self.opt.reorientation_range
         cost_tol = self.opt.cost_tol
 
         ###
@@ -1180,7 +1147,7 @@ class AtomMappingStep:
         search: mapsearch.MappingSearch,
         prim_search_data: mapsearch.PrimSearchData,
         child_structure_data: mapsearch.StructureSearchData,
-        opt: AtomMappingOptions,
+        opt: AtomMappingStepOptions,
     ):
         self.search = search
         self.prim_search_data = prim_search_data
@@ -1194,7 +1161,7 @@ class AtomMappingStep:
         search = self.search
         prim_search_data = self.prim_search_data
         child_structure_data = self.child_structure_data
-        no_remove_mean_displacement = self.opt.no_remove_mean_displacement
+        remove_mean_displacement = self.opt.remove_mean_displacement
         forced_on = self.opt.forced_on
         forced_off = self.opt.forced_off
 
@@ -1221,14 +1188,14 @@ class AtomMappingStep:
                     )
 
         # Generate possible translations
-        if no_remove_mean_displacement:
+        if not remove_mean_displacement:
             # If mean displacement removal is disabled, then we need info
             # on which parent/atom mappings to force on. (We could also allow
             # generating every combination here.)
             if len(forced_on) == 0:
                 raise ValueError(
-                    "If --no-remove-mean-displacement is set, "
-                    "the --forced-on option must be set."
+                    "Error in AtomMappingSetp: If remove_mean_displacement is False, "
+                    "then forced_on must have length > 0."
                 )
             # If forced_on is set, also use parent/child pairs to generate
             # trial translations

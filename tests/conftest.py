@@ -2,6 +2,10 @@ import pathlib
 
 import pytest
 
+import libcasm.configuration as casmconfig
+import libcasm.xtal as xtal
+from casm.tools.shared.json_io import read_required
+
 
 @pytest.fixture
 def data_dir():
@@ -15,6 +19,22 @@ def get_structure(data_dir):
         return (data_dir / "structures" / name).as_posix()
 
     return _get_structure
+
+
+@pytest.fixture
+def get_casm_structure(get_structure):
+    def _get_casm_structure(name):
+        return xtal.Structure.from_dict(read_required(get_structure(name)))
+
+    return _get_casm_structure
+
+
+@pytest.fixture
+def get_prim(get_structure):
+    def _get_prim(name):
+        return casmconfig.Prim.from_dict(read_required(get_structure(name)))
+
+    return _get_prim
 
 
 @pytest.fixture
