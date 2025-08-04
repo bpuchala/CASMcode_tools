@@ -138,3 +138,5 @@ def test_example_map_1_bcc_hcp(examples_dir, tmp_path):
     options = [StructureMappingSearchOptions.from_dict(x) for x in data]
     for opt in options:
         assert isinstance(opt, StructureMappingSearchOptions)
+
+    # assert False

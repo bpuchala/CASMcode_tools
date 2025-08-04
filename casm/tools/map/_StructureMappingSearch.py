@@ -2170,6 +2170,12 @@ class StructureMappingSearch:
         for i_pair, _pair in enumerate(T_pairs):
 
             child_T, parent_T = _pair
+
+            print("child_T:")
+            print(child_T)
+            print("parent_T:")
+            print(parent_T)
+
             if last_child_T is None or not np.allclose(child_T, last_child_T):
                 child_structure_data = mapsearch.make_superstructure_data(
                     prim_structure_data=init_child_structure_data,
@@ -2248,6 +2254,8 @@ class StructureMappingSearch:
                     cost_tol=_cost_tol,
                 )
 
+            print("i_pair:", i_pair, "len(lattice_mappings):", len(lattice_mappings))
+            i_lmap = 0
             for scored_lattice_mapping in lattice_mappings:
                 lattice_mapping_data = mapsearch.LatticeMappingSearchData(
                     prim_data=parent_search_data,
@@ -2297,6 +2305,10 @@ class StructureMappingSearch:
                         lattice_mapping_data=lattice_mapping_data,
                     )
 
+                print(
+                    "i_lmap:", i_lmap, " #trial_translations:", len(trial_translations)
+                )
+
                 # for each combination of lattice mapping and translation,
                 # make and insert a mapping solution (MappingNode)
                 for trial_translation in trial_translations:
@@ -2307,6 +2319,8 @@ class StructureMappingSearch:
                         forced_on=_forced_on,
                         forced_off=_forced_off,
                     )
+
+                i_lmap += 1
 
             while search.size():
                 search.partition()
@@ -2336,10 +2350,10 @@ class StructureMappingSearch:
                 min_total_cost = search_results[0].total_cost()
                 max_total_cost = search_results[-1].total_cost()
 
-            # Delete the last line
-            sys.stdout.write("\033[F")  # Move cursor up one line
-            sys.stdout.write("\033[K")  # Clear the line
-            sys.stdout.flush()
+            # # Delete the last line
+            # sys.stdout.write("\033[F")  # Move cursor up one line
+            # sys.stdout.write("\033[K")  # Clear the line
+            # sys.stdout.flush()
 
             print(
                 (
