@@ -2366,6 +2366,15 @@ class StructureMappingSearch:
             sys.stdout.flush()
             # pbar.update(1)
 
+            self.tabulate_results(
+                search_results=search_results,
+                uuids=uuids,
+                parent=parent,
+                child=child,
+                parent_prim=parent_prim,
+            )
+            sys.stdout.flush()
+
         print("DONE")
         print()
         sys.stdout.flush()

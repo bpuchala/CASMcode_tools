@@ -139,4 +139,4 @@ def test_example_map_1_bcc_hcp(examples_dir, tmp_path):
     for opt in options:
         assert isinstance(opt, StructureMappingSearchOptions)
 
-    # assert False
+    assert False
