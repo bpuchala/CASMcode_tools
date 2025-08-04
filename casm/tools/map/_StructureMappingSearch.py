@@ -2325,6 +2325,16 @@ class StructureMappingSearch:
             while search.size():
                 search.partition()
 
+            print("len(search.results().data()):", len(search.results().data()))
+            data = search.results().data()
+            for i, smap in enumerate(data):
+                print(
+                    f"{i}: "
+                    f"tot:{smap.total_cost():.5f}, "
+                    f"lat:{smap.lattice_cost():.5f}, "
+                    f"atom:{smap.atom_cost():.5f}, "
+                )
+
             search_results, uuids, chain_orbits = self.add_new_results(
                 new_results=search.results().data(),
                 existing_results=search_results,
