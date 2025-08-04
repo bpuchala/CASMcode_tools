@@ -2322,8 +2322,12 @@ class StructureMappingSearch:
 
                 i_lmap += 1
 
+            print("initial search.size():", search.size())
+            i = 0
             while search.size():
                 search.partition()
+                print(f"{i}: search.size(): {search.size()}")
+                i += 1
 
             print("len(search.results().data()):", len(search.results().data()))
             data = search.results().data()
