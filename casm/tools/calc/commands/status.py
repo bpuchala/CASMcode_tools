@@ -61,7 +61,8 @@ def make_config_selection(
           fallback, used if `args.calctype` is not specified. If this is also not
           specified, the default cluster expansion is used.
         - `args.selection`: str, optional, Name of a selection in the enumeration
-            to select configurations from.
+          to select configurations from. Select all configurations
+          if not specified.
 
 
     Returns
@@ -191,8 +192,6 @@ def run_status(args):
         - `args.all`: If set, checks the status of all configurations in the
           enumeration, not just the selected ones.
         - `args.details`: If set, prints configurations with any status.
-        - `args.show_calc_dir`: If set, includes the path to the calculation directory
-          in the output.
 
     Returns
     -------
@@ -233,7 +232,6 @@ def run_status(args):
         return config_selection
 
     status_count = dict()
-    details = []
     standard_status = [
         "none",
         "setup",
@@ -243,15 +241,6 @@ def run_status(args):
         "stopped",
         "complete",
     ]
-
-    def add_details(record):
-        _details = [
-            record.name,
-            record.calc_status,
-            record.calc_jobid,
-            record.calc_runtime,
-        ]
-        details.append(_details)
 
     details_header_printed = False
 
@@ -297,10 +286,114 @@ def run_status(args):
     return 0
 
 
+def run_statusd(args):
+    """Implements ``casm-calc statusd ...``
+
+    Print status for all calculation subdirectories of a specified top level directory.
+    Calculation subdirectories are identified by the presence of a `status.json` file.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        The parsed arguments from the command line. Uses:
+
+        - `args.dir`: str, The top level directory. Subdirectories with a
+          `status.json` file are treated as calculation directories.
+        - `args.tabulate`: If set, prints a table of job status counts.
+        - `args.none`, `args.setup`, `args.started`, `args.stopped`, `args.complete`,
+          `args.other`: If set, prints configurations with the corresponding status. If
+          multiple are set, prints configurations with any of the specified statuses.
+        - `args.all`: If set, checks the status of all configurations in the
+          enumeration, not just the selected ones.
+        - `args.details`: If set, prints configurations with any status.
+        - `args.name_parts`: int, The number of path parts to include in the name.
+          For example, if the calculation directory is `a/b/c/d` and `name_parts`
+          is 2, the name will be `c/d`. If `name_parts` is greater than the number
+          of parts in the path, the entire path is used.
+
+    Returns
+    -------
+    code: int
+        A return code indicating success (0) or failure (non-zero).
+
+    """
+    from tabulate import tabulate
+
+    from casm.tools.shared.calc_dir import CalcDir
+
+    top_dir = args.dir
+    if not top_dir.is_dir():
+        print(f"Directory not found: {args.dir}")
+        return 1
+
+    calc_dirs = [
+        CalcDir(path=p.parent, name_parts=args.name_parts)
+        for p in top_dir.rglob("status.json")
+    ]
+    if not calc_dirs:
+        print("No calculation directories found.")
+        return 1
+
+    status_count = dict()
+    standard_status = [
+        "none",
+        "setup",
+        "submitted",
+        "started",
+        "canceled",
+        "stopped",
+        "complete",
+    ]
+
+    details_header_printed = False
+
+    for calc_dir in calc_dirs:
+        status = calc_dir.status
+        if status in status_count:
+            status_count[status] += 1
+        else:
+            status_count[status] = 1
+
+        if (
+            args.details
+            or (args.none and status == "none")
+            or (args.setup and status == "setup")
+            or (args.started and status == "started")
+            or (args.submitted and status == "submitted")
+            or (args.canceled and status == "canceled")
+            or (args.stopped and status == "stopped")
+            or (args.complete and status == "complete")
+            or (args.other and status not in standard_status)
+        ):
+            if not details_header_printed:
+                print(f"{'Name':36}{'Status':12}{'Job ID':12}{'Runtime':18}")
+                print("-" * 78)
+                details_header_printed = True
+
+            name = calc_dir.name
+            jobid = calc_dir.jobid
+            runtime = calc_dir.runtime
+            print(f"{name:36}{status:12}{jobid:12}{runtime:18}")
+
+    if args.tabulate:
+        table = []
+        for status, count in status_count.items():
+            table.append([status, count])
+        print()
+        print(tabulate(table, headers=["Status", "Count"]))
+        print()
+
+    return 0
+
+
 ################################################################################
 
 
-def print_desc(argv=None):
+def print_status_desc(argv=None):
+    print("No extended description available.")
+
+
+def print_statusd_desc(argv=None):
     print("No extended description available.")
 
 
@@ -322,7 +415,7 @@ def make_status_subparser(c):
     """
     status = c.add_parser(
         "status",
-        help="Chck the status of CASM project calculations",
+        help="Check the status of CASM project calculations",
         description="Check the status of CASM project calculations",
     )
 
@@ -426,4 +519,103 @@ def make_status_subparser(c):
         "--list",
         action="store_true",
         help=("If given, list enumeration, calctype, clex, and selection options."),
+    )
+
+
+def make_statusd_subparser(c):
+    """Constructs the ``casm-calc status --dir ...`` argument parser, and attaches the
+    methods for running the subcommands.
+
+    Parameters
+    ----------
+    c: argparse._SubParsersAction
+        The output from ``parser.add_subparsers`` to which ``casm-calc statusd``
+        arguments are added.
+
+    Returns
+    -------
+    code: int
+        A return code indicating success (0) or failure (non-zero).
+
+    """
+    statusd = c.add_parser(
+        "statusd",
+        help=("Check the status of calculations in a directory, recursively."),
+        description=(
+            "Check the status of calculations in all calculation subdirectories of a "
+            "specified top level directory. Calculation subdirectories are identified "
+            "by the presence of a `status.json` file."
+        ),
+    )
+
+    ### casm-calc status-dir ....
+    statusd.set_defaults(func=run_statusd)
+
+    statusd.add_argument(
+        "dir",
+        type=str,
+        help=("The top level directory."),
+    )
+    statusd.add_argument(
+        "--name-parts",
+        type=int,
+        help=(
+            "The number of path parts to include in the name. For "
+            "example, if the calculation directory is `a/b/c/d` and `name_parts` is 2, "
+            "the name will be `c/d`. If `name_parts` is greater than the number of "
+            "parts in the path, the entire path is used. Default is 2."
+        ),
+        default=2,
+    )
+    statusd.add_argument(
+        "-t",
+        "--tabulate",
+        action="store_true",
+        help=("Print table of job status counts."),
+    )
+    statusd.add_argument(
+        "-d",
+        "--details",
+        action="store_true",
+        help=("Print calculations with any status."),
+    )
+    statusd.add_argument(
+        "--none",
+        action="store_true",
+        help=('Print calculations with status="none".'),
+    )
+    statusd.add_argument(
+        "--setup",
+        action="store_true",
+        help=('Print calculations with status="setup".'),
+    )
+    statusd.add_argument(
+        "--started",
+        action="store_true",
+        help=('Print calculations with status="started".'),
+    )
+    statusd.add_argument(
+        "--submitted",
+        action="store_true",
+        help=('Print calculations with status="submitted".'),
+    )
+    statusd.add_argument(
+        "--canceled",
+        action="store_true",
+        help=('Print calculations with status="canceled".'),
+    )
+    statusd.add_argument(
+        "--stopped",
+        action="store_true",
+        help=('Print calculations with status="stopped".'),
+    )
+    statusd.add_argument(
+        "--complete",
+        action="store_true",
+        help=('Print calculations with status="complete".'),
+    )
+    statusd.add_argument(
+        "--other",
+        action="store_true",
+        help=("Print calculations with any other status."),
     )

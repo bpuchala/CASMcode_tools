@@ -54,6 +54,8 @@ def vasp_setup(args):
           Otherwise, if ASE is installed, it is read using `ase.io.read`.
         - `args.calcdir`: pathlib.Path, The directory to write the calculation input
           files to. This directory will be created if it does not exist.
+        - `args.with_status`: If set, writes a file named `status.json` with contents
+          '{"status": "setup"} in the calculation directory.
 
     Returns
     -------
@@ -72,6 +74,16 @@ def vasp_setup(args):
         casm_structure=read_structure(path=args.structure, format=_get_format(args)),
         calc_dir=args.calcdir,
     )
+    if args.with_status:
+        from casm.tools.shared.json_io import safe_dump
+
+        # Write status.json file
+        safe_dump(
+            data={"status": "setup"},
+            path=args.calcdir / "status.json",
+            force=True,
+            quiet=True,
+        )
     return 0
 
 
@@ -445,6 +457,14 @@ def make_vasp_subparser(c):
             "VASP POSCAR file, and a '.json' or '.casm' suffix will read the file as a "
             "CASM Structure JSON file. Otherwise, the file is read using ASE's "
             "`ase.io.read` method, if ASE is installed."
+        ),
+    )
+    m.add_argument(
+        "--with-status",
+        action="store_true",
+        help=(
+            "If set, writes a file named `status.json` with contents "
+            '{"status": "setup"} in the calculation directory.'
         ),
     )
 

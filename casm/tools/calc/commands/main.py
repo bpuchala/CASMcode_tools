@@ -15,8 +15,8 @@ def make_parser():
 
     """
 
-    from .status import make_status_subparser
-    from .submit import make_submit_subparser
+    from .status import make_status_subparser, make_statusd_subparser
+    from .submit import make_submit_subparser, make_submitd_subparser
     from .vasp import make_vasp_subparser
 
     ### casm-calc ...
@@ -29,6 +29,8 @@ def make_parser():
     make_vasp_subparser(c)
     make_status_subparser(c)
     make_submit_subparser(c)
+    make_statusd_subparser(c)
+    make_submitd_subparser(c)
 
     return parser
 
@@ -68,16 +70,32 @@ def main(argv=None, working_dir=None):
             print_desc(argv=argv)
             return 0
         elif "status" in argv:
-            from .submit import print_desc
+            from .submit import print_status_desc
 
-            print_desc(argv=argv)
+            print_status_desc(argv=argv)
+            return 0
+
+        elif "statusd" in argv:
+
+            from .submit import print_statusd_desc
+
+            print_statusd_desc(argv=argv)
+
             return 0
 
         elif "submit" in argv:
 
-            from .submit import print_desc
+            from .submit import print_submit_desc
 
-            print_desc(argv=argv)
+            print_submit_desc(argv=argv)
+
+            return 0
+
+        elif "submitd" in argv:
+
+            from .submit import print_submitd_desc
+
+            print_submitd_desc(argv=argv)
 
             return 0
 
