@@ -1,7 +1,13 @@
+# Note:
+# - Currently using https://github.com/bpuchala/MyST-NB/tree/keep_newlines_for_merge_streams
+#   for myst-nb so that spacing in code output cells looks like it does in JupyterLab.
+
+myst-nb
 numpydoc
 sphinx
 sphinx-argparse
 sphinx-copybutton
+sphinx-togglebutton
 sphinx_rtd_theme
 sphinxcontrib-bibtex
 pydata-sphinx-theme

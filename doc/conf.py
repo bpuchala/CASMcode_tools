@@ -130,6 +130,18 @@ exclude_patterns = []
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
 
+# Options for notebook rendering
+# nb_scroll_outputs = False
+myst_enable_extensions = [
+    "colon_fence",
+    "dollarmath",
+    "amsmath",
+]
+myst_amsmath_enable = True
+
+# Combine multiple output into one (but this erases newlines)
+nb_merge_streams = True
+
 # -- Options for HTML output ----------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
