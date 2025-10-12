@@ -747,7 +747,7 @@ def make_search_parser(m):
         type=str,
         help=(
             "Read a CASM Prim and map child structure onto allowed sites. It is "
-            "required to also set --fix-parent)."
+            "required to also set --fix-parent."
         ),
     )
     input.add_argument(
