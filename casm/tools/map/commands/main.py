@@ -55,8 +55,6 @@ def main(argv=None, working_dir=None):
     if working_dir is None:
         working_dir = os.getcwd()
 
-    print("argv:", argv)
-
     parser = make_parser()
 
     # if "--desc" is in the arguments, print the description:

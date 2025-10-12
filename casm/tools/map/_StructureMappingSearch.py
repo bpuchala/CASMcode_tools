@@ -13,7 +13,6 @@ import libcasm.mapping.mapsearch as mapsearch
 import libcasm.mapping.methods as mapmethods
 import libcasm.xtal as xtal
 from casm.tools.shared.json_io import (
-    read_optional,
     read_required,
     safe_dump,
 )
@@ -839,6 +838,18 @@ class StructureMappingSearchOptions:
             deduplication_interpolation_factors=data[
                 "deduplication_interpolation_factors"
             ],
+        )
+
+
+def _make_atom_cost_f(opt: StructureMappingSearchOptions):
+    """Get the atom cost function based on the options."""
+    if opt.atom_mapping_cost_method == "isotropic_disp_cost":
+        return mapsearch.IsotropicAtomCost()
+    elif opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost":
+        return mapsearch.SymmetryBreakingAtomCost()
+    else:
+        raise ValueError(
+            f"Unknown atom mapping cost method: {opt.atom_mapping_cost_method}"
         )
 
 
@@ -1999,14 +2010,39 @@ def _write_results(
     child: xtal.Structure,
     parent_prim: casmconfig.Prim,
     results_dir: pathlib.Path,
+    options: StructureMappingSearchOptions,
+    options_history: list[StructureMappingSearchOptions],
 ) -> None:
-    """Write the results of the search."""
+    """Write the results of the search.
+
+    Parameters
+    ----------
+    search_results : list[libcasm.mapping.info.ScoredStructureMapping]
+        The search results to write.
+    uuids : list[str]
+        The UUIDs corresponding to the search results.
+    parent : xtal.Structure
+        The parent structure.
+    child : xtal.Structure
+        The child structure.
+    parent_prim : casmconfig.Prim
+        The parent structure, as a Prim.
+    results_dir : pathlib.Path
+        The directory in which to write the results.
+    options : StructureMappingSearchOptions
+        The current search options.
+    options_history : list[StructureMappingSearchOptions]
+        A history of options used by previous
+        searches.
+
+    """
     data = {
         "parent": parent.to_dict(),
         "child": child.to_dict(),
         "parent_prim": parent_prim.to_dict(),
         "mappings": [smap.to_dict() for smap in search_results],
         "uuids": [x for x in uuids],
+        "options_history": [x.to_dict() for x in options_history] + [options.to_dict()],
     }
     safe_dump(
         data,
@@ -2016,18 +2052,126 @@ def _write_results(
     )
 
 
-def _write_options_history(
+def _validate_options_for_parent_structure(
     opt: StructureMappingSearchOptions,
-    results_dir: pathlib.Path,
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
 ) -> None:
-    options = read_optional(results_dir / "options_history.json", default=[])
-    options.append(opt.to_dict())
-    safe_dump(
-        options,
-        path=results_dir / "options_history.json",
-        force=True,
-        quiet=True,
+    """Raise if atom types or fractions differ between parent and child."""
+
+    # This is only validation for the case of mapping to a parent structure,
+    # not just mapping to a parent prim.
+
+    # Check atom types and stoichiometry
+    parent_atom_types, parent_counts = np.unique(
+        parent_structure.atom_type(), return_counts=True
     )
+    total_atoms = np.sum(parent_counts)
+    parent_atom_frac = parent_counts / total_atoms
+
+    child_atom_types, child_counts = np.unique(child.atom_type(), return_counts=True)
+    total_atoms = np.sum(child_counts)
+    child_atom_frac = child_counts / total_atoms
+
+    if (parent_atom_types != child_atom_types).any():
+        print("Error: Parent atom types differs from child atom types")
+        print(f"- Parent atom types: {parent_atom_types}")
+        print(f"- Child atom types: {child_atom_types}")
+        print()
+        print("Stopping")
+        sys.exit(1)
+
+    if not np.allclose(parent_atom_frac, child_atom_frac):
+        print("Error: Parent and child structures have different atom fractions")
+        print(f"- Atom types: {parent_atom_types}")
+        print(f"- Parent atom fraction: {parent_atom_frac}")
+        print(f"- Child atom fraction: {child_atom_frac}")
+        print()
+        print("Stopping")
+        sys.exit(1)
+
+    if opt.forced_on is not None:
+        _allowed = [list([x]) for x in parent_structure.atom_type()]
+        _child_types = child.atom_type()
+        for parent_site_index, child_atom_index in opt.forced_on.items():
+            child_type = _child_types[child_atom_index]
+            if child_type not in _allowed[parent_site_index]:
+                invalid_forced_on_values_error(
+                    parent_site_index=parent_site_index,
+                    child_atom_index=child_atom_index,
+                    child_type=child_type,
+                    allowed_types=_allowed[parent_site_index],
+                )
+
+    if opt.fix_parent:
+        child_n_atoms = len(child.atom_type())
+        parent_n_atoms = len(parent_structure.atom_type())
+        if child_n_atoms != parent_n_atoms:
+            invalid_fix_parent_error()
+
+    else:
+        # Print notice if parent or child are not primitive, and write the
+        # primitive structures
+        primitive_parent = xtal.make_primitive_structure(parent_structure)
+        if len(primitive_parent.atom_type()) != len(parent_structure.atom_type()):
+            safe_dump(
+                xtal.pretty_json(primitive_parent.to_dict()),
+                path="parent.primitive.json",
+                force=True,
+                quiet=True,
+            )
+            primitive_parent_notice()
+
+        primitive_child = xtal.make_primitive_structure(child)
+        if len(primitive_child.atom_type()) != len(child.atom_type()):
+            safe_dump(
+                xtal.pretty_json(primitive_child.to_dict()),
+                path="child.primitive.json",
+                force=True,
+                quiet=True,
+            )
+            primitive_child_notice()
+
+    if opt.child_transformation_matrix_to_super_list is None:
+        # Validate the min/max number of atoms
+        if opt.min_n_atoms < 1:
+            invalid_min_n_atoms_error(min_n_atoms=opt.min_n_atoms)
+
+        _max_n_atoms = _get_max_n_atoms_for_parent_structure(
+            max_n_atoms=opt.max_n_atoms,
+            parent_structure=parent_structure,
+            child=child,
+        )
+        if _max_n_atoms < opt.min_n_atoms:
+            computed_msg = (
+                "(computed from lcm of atom counts)" if opt.max_n_atoms is None else ""
+            )
+            invalid_max_n_atoms_error(
+                min_n_atoms=opt.min_n_atoms,
+                max_n_atoms=_max_n_atoms,
+                computed_msg=computed_msg,
+            )
+
+    # Validate lattice mapping cost method
+    if opt.lattice_mapping_cost_method not in [
+        "isotropic_strain_cost",
+        "symmetry_breaking_strain_cost",
+    ]:
+        invalid_lattice_mapping_cost_method_error(opt.lattice_mapping_cost_method)
+
+    # Validate atom mapping cost method
+    if opt.atom_mapping_cost_method not in [
+        "isotropic_disp_cost",
+        "symmetry_breaking_disp_cost",
+    ]:
+        invalid_atom_mapping_cost_method_error(opt.atom_mapping_cost_method)
+
+    # Validate that deduplication_interpolation_factors is a list of floats:
+    dedup_factors = opt.deduplication_interpolation_factors
+    if not isinstance(dedup_factors, list) or not all(
+        isinstance(factor, float) for factor in dedup_factors
+    ):
+        invalid_deduplication_interpolation_factors_error(dedup_factors)
 
 
 class StructureMappingSearch:
@@ -2091,154 +2235,6 @@ class StructureMappingSearch:
         self.opt: StructureMappingSearchOptions = opt
         """StructureMappingSearchOptions: Options for the search."""
 
-    def _enable_symmetry_breaking_atom_cost(self):
-        """Check if symmetry breaking atom cost is enabled based on the options."""
-        return self.opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost"
-
-    def _atom_cost_f(self):
-        """Get the atom cost function based on the options."""
-        if self.opt.atom_mapping_cost_method == "isotropic_disp_cost":
-            return mapsearch.IsotropicAtomCost()
-        elif self.opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost":
-            return mapsearch.SymmetryBreakingAtomCost()
-        else:
-            raise ValueError(
-                f"Unknown atom mapping cost method: {self.opt.atom_mapping_cost_method}"
-            )
-
-    def _total_cost_f(self):
-        """Get the total cost function based on the options."""
-        return mapsearch.WeightedTotalCost(
-            lattice_cost_weight=self.opt.lattice_cost_weight
-        )
-
-    def validate(
-        self,
-        parent: xtal.Structure,
-        child: xtal.Structure,
-    ) -> None:
-        """Raise if atom types or fractions differ between parent and child."""
-
-        # This is only validation for the case of mapping to a parent structure,
-        # not just mapping to a parent prim.
-
-        # Check atom types and stoichiometry
-        parent_atom_types, parent_counts = np.unique(
-            parent.atom_type(), return_counts=True
-        )
-        total_atoms = np.sum(parent_counts)
-        parent_atom_frac = parent_counts / total_atoms
-
-        child_atom_types, child_counts = np.unique(
-            child.atom_type(), return_counts=True
-        )
-        total_atoms = np.sum(child_counts)
-        child_atom_frac = child_counts / total_atoms
-
-        if (parent_atom_types != child_atom_types).any():
-            print("Error: Parent atom types differs from child atom types")
-            print(f"- Parent atom types: {parent_atom_types}")
-            print(f"- Child atom types: {child_atom_types}")
-            print()
-            print("Stopping")
-            sys.exit(1)
-
-        if not np.allclose(parent_atom_frac, child_atom_frac):
-            print("Error: Parent and child structures have different atom fractions")
-            print(f"- Atom types: {parent_atom_types}")
-            print(f"- Parent atom fraction: {parent_atom_frac}")
-            print(f"- Child atom fraction: {child_atom_frac}")
-            print()
-            print("Stopping")
-            sys.exit(1)
-
-        if self.opt.forced_on is not None:
-            _allowed = [list([x]) for x in parent.atom_type()]
-            _child_types = child.atom_type()
-            for parent_site_index, child_atom_index in self.opt.forced_on.items():
-                child_type = _child_types[child_atom_index]
-                if child_type not in _allowed[parent_site_index]:
-                    invalid_forced_on_values_error(
-                        parent_site_index=parent_site_index,
-                        child_atom_index=child_atom_index,
-                        child_type=child_type,
-                        allowed_types=_allowed[parent_site_index],
-                    )
-
-        if self.opt.fix_parent:
-            child_n_atoms = len(child.atom_type())
-            parent_n_atoms = len(parent.atom_type())
-            if child_n_atoms != parent_n_atoms:
-                invalid_fix_parent_error()
-
-        else:
-            # Print notice if parent or child are not primitive, and write the
-            # primitive structures
-            primitive_parent = xtal.make_primitive_structure(parent)
-            if len(primitive_parent.atom_type()) != len(parent.atom_type()):
-                safe_dump(
-                    xtal.pretty_json(primitive_parent.to_dict()),
-                    path="parent.primitive.json",
-                    force=True,
-                    quiet=True,
-                )
-                primitive_parent_notice()
-
-            primitive_child = xtal.make_primitive_structure(child)
-            if len(primitive_child.atom_type()) != len(child.atom_type()):
-                safe_dump(
-                    xtal.pretty_json(primitive_child.to_dict()),
-                    path="child.primitive.json",
-                    force=True,
-                    quiet=True,
-                )
-                primitive_child_notice()
-
-        if self.opt.child_transformation_matrix_to_super_list is None:
-            # Validate the min/max number of atoms
-            if self.opt.min_n_atoms < 1:
-                invalid_min_n_atoms_error(min_n_atoms=self.opt.min_n_atoms)
-
-            _max_n_atoms = _get_max_n_atoms_for_parent_structure(
-                max_n_atoms=self.opt.max_n_atoms,
-                parent_structure=parent,
-                child=child,
-            )
-            if _max_n_atoms < self.opt.min_n_atoms:
-                computed_msg = (
-                    "(computed from lcm of atom counts)"
-                    if self.opt.max_n_atoms is None
-                    else ""
-                )
-                invalid_max_n_atoms_error(
-                    min_n_atoms=self.opt.min_n_atoms,
-                    max_n_atoms=_max_n_atoms,
-                    computed_msg=computed_msg,
-                )
-
-        # Validate lattice mapping cost method
-        if self.opt.lattice_mapping_cost_method not in [
-            "isotropic_strain_cost",
-            "symmetry_breaking_strain_cost",
-        ]:
-            invalid_lattice_mapping_cost_method_error(
-                self.opt.lattice_mapping_cost_method
-            )
-
-        # Validate atom mapping cost method
-        if self.opt.atom_mapping_cost_method not in [
-            "isotropic_disp_cost",
-            "symmetry_breaking_disp_cost",
-        ]:
-            invalid_atom_mapping_cost_method_error(self.opt.atom_mapping_cost_method)
-
-        # Validate that deduplication_interpolation_factors is a list of floats:
-        dedup_factors = self.opt.deduplication_interpolation_factors
-        if not isinstance(dedup_factors, list) or not all(
-            isinstance(factor, float) for factor in dedup_factors
-        ):
-            invalid_deduplication_interpolation_factors_error(dedup_factors)
-
     def __call__(
         self,
         parent: xtal.Structure,
@@ -2278,11 +2274,10 @@ class StructureMappingSearch:
                     "Mapping to a prim is only supported with the --fix-parent option."
                 )
 
-        self._supercell_set = casmconfig.SupercellSet(prim=parent_prim)
-
         search_results = []
         uuids = []
         chain_orbits = []
+        options_history = []
 
         if results_dir.exists():
             if merge is False:
@@ -2290,7 +2285,6 @@ class StructureMappingSearch:
                 sys.exit(1)
             else:
                 data = read_required(results_dir / "mappings.json")
-
                 # Validate same parent and child structures:
                 if alloy is False:
                     _last_parent = xtal.Structure.from_dict(data.get("parent"))
@@ -2311,28 +2305,36 @@ class StructureMappingSearch:
                 ]
                 uuids = data.get("uuids", [])
 
-                options_data = read_required(results_dir / "options_history.json")
-                last_options = StructureMappingSearchOptions.from_dict(options_data[-1])
+                options_history = [
+                    StructureMappingSearchOptions.from_dict(x)
+                    for x in data.get("options_history", [])
+                ]
+                if len(options_history) > 0:
+                    last_options = options_history[-1]
 
-                if (
-                    self.opt.lattice_mapping_cost_method
-                    != last_options.lattice_mapping_cost_method
-                ):
-                    different_lattice_mapping_cost_method_error()
-                if (
-                    self.opt.atom_mapping_cost_method
-                    != last_options.atom_mapping_cost_method
-                ):
-                    different_atom_mapping_cost_method_error()
-                if not math.isclose(
-                    self.opt.lattice_cost_weight,
-                    last_options.lattice_cost_weight,
-                    abs_tol=1e-5,
-                ):
-                    different_lattice_cost_weight_error()
+                    if (
+                        self.opt.lattice_mapping_cost_method
+                        != last_options.lattice_mapping_cost_method
+                    ):
+                        different_lattice_mapping_cost_method_error()
+                    if (
+                        self.opt.atom_mapping_cost_method
+                        != last_options.atom_mapping_cost_method
+                    ):
+                        different_atom_mapping_cost_method_error()
+                    if not math.isclose(
+                        self.opt.lattice_cost_weight,
+                        last_options.lattice_cost_weight,
+                        abs_tol=1e-5,
+                    ):
+                        different_lattice_cost_weight_error()
 
         if alloy is False:
-            self.validate(parent, child)
+            _validate_options_for_parent_structure(
+                opt=self.opt,
+                parent_structure=parent,
+                child=child,
+            )
         else:
             # TODO
             pass
@@ -2352,7 +2354,9 @@ class StructureMappingSearch:
         _min_n_atoms = self.opt.min_n_atoms
         _child_T_list = self.opt.child_transformation_matrix_to_super_list
         _parent_T_list = self.opt.parent_transformation_matrix_to_super_list
-        _enable_symmetry_breaking_atom_cost = self._enable_symmetry_breaking_atom_cost()
+        _enable_symmetry_breaking_atom_cost = (
+            self.opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost"
+        )
         _total_min_cost = self.opt.total_min_cost
         _total_max_cost = self.opt.total_max_cost
         _total_k_best = self.opt.total_k_best
@@ -2365,10 +2369,12 @@ class StructureMappingSearch:
         _lattice_mapping_reorientation_range = (
             self.opt.lattice_mapping_reorientation_range
         )
-        _atom_cost_f = self._atom_cost_f()
+        _atom_cost_f = _make_atom_cost_f(opt=self.opt)
         _forced_on = self.opt.forced_on if self.opt.forced_on is not None else {}
         _forced_off = self.opt.forced_off if self.opt.forced_off is not None else []
-        _total_cost_f = self._total_cost_f()
+        _total_cost_f = mapsearch.WeightedTotalCost(
+            lattice_cost_weight=self.opt.lattice_cost_weight
+        )
         _cost_tol = self.opt.cost_tol
 
         ## Fixed parameters
@@ -2420,10 +2426,6 @@ class StructureMappingSearch:
         total = len(T_pairs)
         print(f"Beginning search over {total} parent / child superstructure pairs...")
         print()
-        print("Search results so far:")
-        print()
-        print()
-        sys.stdout.flush()
 
         last_child_T = None
         child_structure_data = None
@@ -2600,28 +2602,26 @@ class StructureMappingSearch:
                 child=child,
                 parent_prim=parent_prim,
                 results_dir=results_dir,
+                options=self.opt,
+                options_history=options_history,
             )
 
             if len(search_results) > 0:
                 min_total_cost = search_results[0].total_cost()
                 max_total_cost = search_results[-1].total_cost()
 
-            # Delete the last line
-            sys.stdout.write("\033[F")  # Move cursor up one line
-            sys.stdout.write("\033[K")  # Clear the line
-            sys.stdout.flush()
-
             print(
                 (
-                    f"Pair: {i_pair + 1} / {total} (#atoms: {n_atoms}), "
+                    f"\rPair: {i_pair + 1} / {total} (#atoms: {n_atoms}), "
                     f"MinTotalCost: {min_total_cost:.5f}, "
                     f"MaxTotalCost: {max_total_cost:.5f}, "
                     f"#mappings: {len(search_results)}"
-                )
+                ),
+                end="",
             )
-            sys.stdout.flush()
-            # pbar.update(1)
 
+        print()
+        print()
         print("DONE")
         print()
         sys.stdout.flush()
@@ -2635,8 +2635,5 @@ class StructureMappingSearch:
             child=child,
             parent_prim=parent_prim,
         )
-
-        # Write the options history
-        _write_options_history(opt=self.opt, results_dir=results_dir)
 
         return 0

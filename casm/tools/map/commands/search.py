@@ -343,7 +343,6 @@ def run_search(args):
     import sys
 
     import libcasm.configuration as casmconfig
-    import libcasm.xtal as xtal
     from casm.tools.map import (
         StructureMappingSearch,
         StructureMappingSearchOptions,
@@ -357,21 +356,21 @@ def run_search(args):
 
     if args.prim:
         parent_prim = casmconfig.Prim.from_dict(data=read_required(args.prim))
-        print("ParentPrim:")
-        print(parent_prim)
-        print()
+        # print("ParentPrim:")
+        # print(parent_prim)
+        # print()
     else:
         parent_prim = None
 
     parent = read_structure(path=args.parent, format=_get_parent_format(args))
-    print("Parent:")
-    print(parent)
-    print()
+    # print("Parent:")
+    # print(parent)
+    # print()
 
     child = read_structure(path=args.child, format=_get_child_format(args))
-    print("Child:")
-    print(child)
-    print()
+    # print("Child:")
+    # print(child)
+    # print()
 
     if args.options is not None:
         data = read_required(args.options)
@@ -424,9 +423,10 @@ def run_search(args):
 
         results_dir = "results" if args.results_dir is None else args.results_dir
 
-        data = read_optional(results_dir / "options_history.json", default=[])
+        data = read_optional(results_dir / "mappings.json", default=[])
         options_history = [
-            StructureMappingSearchOptions.from_dict(data=x) for x in data
+            StructureMappingSearchOptions.from_dict(data=x)
+            for x in data.get("options_history", [])
         ]
         last_max_n_atoms = None
         if len(options_history):
@@ -446,19 +446,14 @@ def run_search(args):
         opt.min_n_atoms = next_max_n_atoms
         merge = True
 
-        print()
         print(
             f"""
---next: 
+--next:
     Expanding search to next greatest common multiple number
     of atoms ({next_max_n_atoms} atoms) and merging results.
 """
         )
         sys.stdout.flush()
-
-    print("Options:")
-    print(xtal.pretty_json(opt.to_dict()))
-    sys.stdout.flush()
 
     f = StructureMappingSearch(opt=opt)
     code = f(

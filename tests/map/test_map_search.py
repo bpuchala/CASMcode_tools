@@ -48,6 +48,7 @@ def test_example_map_1_bcc_fcc(examples_dir, tmp_path):
     assert "parent" in data
     assert "mappings" in data
     assert "uuids" in data
+    assert "options_history" in data
 
     parent = Structure.from_dict(data["parent"])
     assert isinstance(parent, Structure)
@@ -65,11 +66,11 @@ def test_example_map_1_bcc_fcc(examples_dir, tmp_path):
     for mapping in mappings:
         assert isinstance(mapping, ScoredStructureMapping)
 
-    # Check options file
-    data = read_required(results_dir / "options_history.json")
-    assert isinstance(data, list)
-    assert len(data) == 1
-    options = [StructureMappingSearchOptions.from_dict(x) for x in data]
+    # Check options history
+    options_history = data["options_history"]
+    assert isinstance(options_history, list)
+    assert len(options_history) == 1
+    options = [StructureMappingSearchOptions.from_dict(x) for x in options_history]
     for opt in options:
         assert isinstance(opt, StructureMappingSearchOptions)
 
@@ -112,6 +113,7 @@ def test_example_map_1_bcc_hcp(examples_dir, tmp_path):
     assert "parent" in data
     assert "mappings" in data
     assert "uuids" in data
+    assert "options_history" in data
 
     parent = Structure.from_dict(data["parent"])
     assert isinstance(parent, Structure)
@@ -129,10 +131,10 @@ def test_example_map_1_bcc_hcp(examples_dir, tmp_path):
     for mapping in mappings:
         assert isinstance(mapping, ScoredStructureMapping)
 
-    # Check options file
-    data = read_required(results_dir / "options_history.json")
-    assert isinstance(data, list)
-    assert len(data) == 1
-    options = [StructureMappingSearchOptions.from_dict(x) for x in data]
+    # Check options history
+    options_history = data["options_history"]
+    assert isinstance(options_history, list)
+    assert len(options_history) == 1
+    options = [StructureMappingSearchOptions.from_dict(x) for x in options_history]
     for opt in options:
         assert isinstance(opt, StructureMappingSearchOptions)
