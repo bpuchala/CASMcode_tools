@@ -116,8 +116,8 @@ def _make_T_pairs_for_parent_structure(
     parent_structure: xtal.Structure,
     child: xtal.Structure,
     parent_prim: casmconfig.Prim,
-    min_n_atoms: int,
-    max_n_atoms: int,
+    min_n_atoms: int = 1,
+    max_n_atoms: Optional[int] = None,
     child_T_list: Optional[list[np.ndarray]] = None,
     parent_T_list: Optional[list[np.ndarray]] = None,
 ):
@@ -132,10 +132,10 @@ def _make_T_pairs_for_parent_structure(
         The child structure.
     parent_prim : casmconfig.Prim
         The primitive parent structure.
-    min_n_atoms : int
+    min_n_atoms : int = 1
         The minimum number of atoms in the superstructures that should be included
         in the search.
-    max_n_atoms : Optional[int]
+    max_n_atoms : Optional[int] = None
         The maximum number of atoms in the superstructures that should be included
         in the search.
     child_T_list : Optional[list[np.ndarray]] = None
@@ -512,10 +512,10 @@ def _make_T_pairs_for_parent_prim(
         The minimum number of each parent type per parent unit cell.
     max_atom_count_per_parent_unitcell: np.ndarray
         The maximum number of each parent type per parent unit cell.
-    min_n_atoms : int
+    min_n_atoms : int = 1
         The minimum number of atoms in the superstructures that should be included
         in the search.
-    max_n_atoms : Optional[int]
+    max_n_atoms : Optional[int] = None
         The maximum number of atoms in the superstructures that should be included
         in the search. If provided, use the maximum of this value and the number of
         atoms in the child. Otherwise, use the number of atoms in the child structure.
@@ -890,6 +890,89 @@ class MappingSearchData:
         self.options_history: list[StructureMappingSearchOptions] = options_history
         """list[StructureMappingSearchOptions]: A history of options used by previous
         searches."""
+
+    def mapping_costs(self):
+        """Calculate isotropic and symmetry-breaking costs for each mapping.
+
+        Returns
+        -------
+        mapping_costs: list[dict]
+            The mapping costs for each mapping, with format:
+
+                .. code-block:: python
+
+                    [
+                        {
+                            "isotropic_strain_cost": float,
+                            "symmetry_breaking_strain_cost": float,
+                            "isotropic_atom_cost": float,
+                            "symmetry_breaking_atom_cost": float,
+                        },
+                        ...
+                    ]
+
+        """
+        prim_data = mapsearch.PrimSearchData(
+            prim=self.parent_prim.xtal_prim,
+            enable_symmetry_breaking_atom_cost=True,
+        )
+        init_child_structure_data = mapsearch.StructureSearchData(
+            lattice=self.child.lattice(),
+            atom_coordinate_cart=self.child.atom_coordinate_cart(),
+            atom_type=self.child.atom_type(),
+            override_structure_factor_group=None,
+        )
+
+        _mapping_costs = []
+
+        for result in self.mappings:
+            T_child = make_child_transformation_matrix_to_super(
+                parent_lattice=self.parent_prim.xtal_prim.lattice(),
+                child_lattice=self.child.lattice(),
+                structure_mapping=result,
+            )
+            T_child = np.round(T_child).astype(int)
+            child_structure_data = mapsearch.make_superstructure_data(
+                prim_structure_data=init_child_structure_data,
+                transformation_matrix_to_super=T_child,
+            )
+
+            lattice_mapping_data = mapsearch.LatticeMappingSearchData(
+                prim_data=prim_data,
+                structure_data=child_structure_data,
+                lattice_mapping=result.lattice_mapping(),
+            )
+            atom_mapping_data = mapsearch.AtomMappingSearchData(
+                lattice_mapping_data=lattice_mapping_data,
+                trial_translation_cart=result.atom_mapping().translation(),
+            )
+
+            x = dict()
+
+            x["isotropic_strain_cost"] = mapinfo.isotropic_strain_cost(
+                deformation_gradient=result.lattice_mapping().deformation_gradient(),
+            )
+            x["symmetry_breaking_strain_cost"] = mapinfo.symmetry_breaking_strain_cost(
+                deformation_gradient=result.lattice_mapping().deformation_gradient(),
+                lattice1_point_group=prim_data.prim_crystal_point_group(),
+            )
+
+            f = mapsearch.IsotropicAtomCost()
+            x["isotropic_atom_cost"] = f.cost(
+                lattice_mapping_data=lattice_mapping_data,
+                atom_mapping_data=atom_mapping_data,
+                atom_mapping=result.atom_mapping(),
+            )
+            f = mapsearch.SymmetryBreakingAtomCost()
+            x["symmetry_breaking_atom_cost"] = f.cost(
+                lattice_mapping_data=lattice_mapping_data,
+                atom_mapping_data=atom_mapping_data,
+                atom_mapping=result.atom_mapping(),
+            )
+
+            _mapping_costs.append(x)
+
+        return _mapping_costs
 
     @property
     def parent_atom_types(self):
@@ -1622,6 +1705,331 @@ def invalid_deduplication_interpolation_factors_error(dedup_factors):
     sys.exit(1)
 
 
+def calculate_all_costs(
+    result: mapinfo.ScoredStructureMapping,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+):
+    prim_data = mapsearch.PrimSearchData(
+        prim=parent_prim.xtal_prim,
+        enable_symmetry_breaking_atom_cost=True,
+    )
+    init_child_structure_data = mapsearch.StructureSearchData(
+        lattice=child.lattice(),
+        atom_coordinate_cart=child.atom_coordinate_cart(),
+        atom_type=child.atom_type(),
+        override_structure_factor_group=None,
+    )
+    T_child = make_child_transformation_matrix_to_super(
+        parent_lattice=parent_prim.xtal_prim.lattice(),
+        child_lattice=child.lattice(),
+        structure_mapping=result,
+    )
+    T_child = np.round(T_child).astype(int)
+    child_structure_data = mapsearch.make_superstructure_data(
+        prim_structure_data=init_child_structure_data,
+        transformation_matrix_to_super=T_child,
+    )
+
+    lattice_mapping_data = mapsearch.LatticeMappingSearchData(
+        prim_data=prim_data,
+        structure_data=child_structure_data,
+        lattice_mapping=result.lattice_mapping(),
+    )
+    atom_mapping_data = mapsearch.AtomMappingSearchData(
+        lattice_mapping_data=lattice_mapping_data,
+        trial_translation_cart=result.atom_mapping().translation(),
+    )
+
+    isotropic_strain_cost = mapinfo.isotropic_strain_cost(
+        deformation_gradient=result.lattice_mapping().deformation_gradient(),
+    )
+    symbreaking_strain_cost = mapinfo.symmetry_breaking_strain_cost(
+        deformation_gradient=result.lattice_mapping().deformation_gradient(),
+        lattice1_point_group=prim_data.prim_crystal_point_group(),
+    )
+
+    f = mapsearch.IsotropicAtomCost()
+    isotropic_atom_cost = f.cost(
+        lattice_mapping_data=lattice_mapping_data,
+        atom_mapping_data=atom_mapping_data,
+        atom_mapping=result.atom_mapping(),
+    )
+    f = mapsearch.SymmetryBreakingAtomCost()
+    symbreaking_atom_cost = f.cost(
+        lattice_mapping_data=lattice_mapping_data,
+        atom_mapping_data=atom_mapping_data,
+        atom_mapping=result.atom_mapping(),
+    )
+
+    return {
+        "isotropic_strain_cost": isotropic_strain_cost,
+        "symmetry_breaking_strain_cost": symbreaking_strain_cost,
+        "isotropic_atom_cost": isotropic_atom_cost,
+        "symmetry_breaking_atom_cost": symbreaking_atom_cost,
+    }
+
+
+def _tabulate_results(
+    opt: StructureMappingSearchOptions,
+    search_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+) -> str:
+    """Tabulate the results of the search."""
+
+    prec = 5
+    headers = [
+        "Index",
+        "TotCost",
+        "LatCost",
+        "AtmCost",
+        "Parent Vol., Grp., #Ops",
+        "Child Vol., Grp., #Ops",
+        "Mult.",
+        "UUID",
+    ]
+    f_chain = opt.deduplication_interpolation_factors
+    child_prim = casmconfig.Prim(xtal.Prim.from_atom_coordinates(structure=child))
+
+    data = []
+    for i, scored_structure_mapping in enumerate(search_results):
+        smap = scored_structure_mapping
+
+        latmap = smap.lattice_mapping()
+        T_parent = latmap.transformation_matrix_to_super()
+        parent_volume = abs(int(round(np.linalg.det(T_parent))))
+        T_child = make_child_transformation_matrix_to_super(
+            parent_lattice=parent_prim.xtal_prim.lattice(),
+            child_lattice=child.lattice(),
+            structure_mapping=scored_structure_mapping,
+        )
+        child_volume = abs(int(round(np.linalg.det(T_child))))
+
+        total_cost = f"{smap.total_cost():.{prec}f}"
+        lattice_cost = f"{smap.lattice_cost():.{prec}f}"
+        atom_cost = f"{smap.atom_cost():.{prec}f}"
+
+        chain_orbit = make_primitive_chain_orbit(
+            parent_prim=parent_prim,
+            child=child,
+            structure_mapping=smap,
+            f_chain=f_chain,
+        )
+        mult = len(chain_orbit)
+
+        parent_info = make_parent_supercell_info(
+            structure_mapping=smap,
+            parent_prim=parent_prim,
+        )
+        parent_grp = parent_info["spacegroup_type"]["international_short"]
+        fg_size = parent_info["factor_group_size"]
+
+        child_info = make_child_supercell_info(
+            T_child=T_child,
+            child_prim=child_prim,
+        )
+        child_grp = child_info["spacegroup_type"]["international_short"]
+        child_fg_size = child_info["factor_group_size"]
+
+        data.append(
+            [
+                i,
+                total_cost,
+                lattice_cost,
+                atom_cost,
+                str(parent_volume) + ", " + parent_grp + ", " + str(fg_size),
+                str(child_volume) + ", " + child_grp + ", " + str(child_fg_size),
+                mult,
+                uuids[i],
+            ]
+        )
+
+    print("Lattice cost method:", opt.lattice_mapping_cost_method)
+    print("Atom cost method:", opt.atom_mapping_cost_method)
+    print("Lattice cost weight:", opt.lattice_cost_weight)
+    print(tabulate(data, headers=headers, tablefmt="grid"))
+    print()
+
+
+def _add_new_results(
+    opt: StructureMappingSearchOptions,
+    new_results: list[mapinfo.ScoredStructureMapping],
+    existing_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    chain_orbits: list[list[xtal.Structure]],
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    k_best: int,
+    cost_tol: float,
+) -> tuple[
+    list[mapinfo.ScoredStructureMapping],
+    list[str],
+    list[list[xtal.Structure]],
+]:
+    """Add new results to the existing search results, deduplicating them.
+
+    Parameters
+    ----------
+    opt : StructureMappingSearchOptions
+        The search options.
+    new_results : list[libcasm.mapping.info.ScoredStructureMapping]
+        The new results to add to the existing search results.
+    existing_results : list[libcasm.mapping.info.ScoredStructureMapping]
+        The existing search results to which the new results will be added.
+    uuids : list[str]
+        The UUIDs of the existing search results.
+    chain_orbits : list[list[xtal.Structure]]
+        The chain orbits of the existing search results.
+    parent : xtal.Structure
+        The parent structure.
+    child : xtal.Structure
+        The child structure.
+    parent_prim : casmconfig.Prim
+        The parent structure, as a Prim.
+    k_best : int
+        The number of best results to keep after deduplication. Any approximate ties
+        will also be kept.
+    cost_tol : float
+        The tolerance for comparing costs.
+
+    Returns
+    -------
+    search_results : list[libcasm.mapping.info.ScoredStructureMapping]
+        The updated list of search results after deduplication.
+    uuids : list[str]
+        The updated list of UUIDs corresponding to the search results.
+    chain_orbits : list[list[xtal.Structure]]
+        The updated list of chain orbits corresponding to the search results.
+
+    """
+    search_results = existing_results
+
+    # Deduplicate the new results
+    f_chain = opt.deduplication_interpolation_factors
+
+    def make_chain(structure_mapping):
+        return make_primitive_chain(
+            parent_lattice=parent_prim.xtal_prim.lattice(),
+            child=child,
+            structure_mapping=structure_mapping,
+            f_chain=f_chain,
+        )
+
+    def make_orbit(chain_prototype):
+        return make_chain_orbit(
+            chain_prototype=chain_prototype,
+            parent_prim=parent_prim,
+        )
+
+    while len(chain_orbits) < len(search_results):
+        smap = search_results[len(chain_orbits)]
+        chain_orbits.append(make_orbit(make_chain(smap)))
+        uuids.append(str(uuid.uuid4()))
+
+    if len(new_results) == 0:
+        return search_results, uuids, chain_orbits
+
+    for i, smap_new in enumerate(new_results):
+        primitive_chain = make_chain(smap_new)
+
+        # Check for duplicates:
+        found_duplicate = False
+        i_duplicate = 0
+        for smap_existing, chain_orbit_existing in zip(search_results, chain_orbits):
+            if chain_is_in_orbit(primitive_chain, chain_orbit_existing):
+                found_duplicate = True
+                break
+            i_duplicate += 1
+
+        if found_duplicate:
+            smap_existing = search_results[i_duplicate]
+            scel_size_new = parent_supercell_size(smap_new)
+            scel_size_existing = parent_supercell_size(smap_existing)
+
+            prefer_new = False
+            if scel_size_new < scel_size_existing:
+                prefer_new = True
+
+            # prefer smaller volume mappings
+            if prefer_new:
+                search_results[i_duplicate] = smap_new
+                uuids[i_duplicate] = str(uuid.uuid4())
+                chain_orbits[i_duplicate] = make_orbit(primitive_chain)
+            else:
+                continue
+        else:
+            search_results.append(smap_new)
+            uuids.append(str(uuid.uuid4()))
+            chain_orbits.append(make_orbit(primitive_chain))
+
+    # Sort the search results and chain orbits, by total cost
+    sys.stdout.flush()
+    isorted = [
+        x[0] for x in sorted(enumerate(search_results), key=lambda x: x[1].total_cost())
+    ]
+    search_results = [search_results[i] for i in isorted]
+    uuids = [uuids[i] for i in isorted]
+    chain_orbits = [chain_orbits[i] for i in isorted]
+
+    # Keep only the k-best results
+    if len(search_results) > k_best:
+        next_index = k_best
+        while next_index < len(search_results):
+            next_cost = search_results[next_index].total_cost()
+            if math.isclose(
+                search_results[k_best - 1].total_cost(), next_cost, abs_tol=cost_tol
+            ):
+                next_index += 1
+            else:
+                break
+
+        search_results = search_results[:(next_index)]
+        uuids = uuids[:(next_index)]
+        chain_orbits = chain_orbits[:(next_index)]
+
+    return search_results, uuids, chain_orbits
+
+
+def _write_results(
+    search_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    parent: xtal.Structure,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    results_dir: pathlib.Path,
+) -> None:
+    """Write the results of the search."""
+    data = {
+        "parent": parent.to_dict(),
+        "child": child.to_dict(),
+        "parent_prim": parent_prim.to_dict(),
+        "mappings": [smap.to_dict() for smap in search_results],
+        "uuids": [x for x in uuids],
+    }
+    safe_dump(
+        data,
+        path=results_dir / "mappings.json",
+        force=True,
+        quiet=True,
+    )
+
+
+def _write_options_history(
+    opt: StructureMappingSearchOptions,
+    results_dir: pathlib.Path,
+) -> None:
+    options = read_optional(results_dir / "options_history.json", default=[])
+    options.append(opt.to_dict())
+    safe_dump(
+        options,
+        path=results_dir / "options_history.json",
+        force=True,
+        quiet=True,
+    )
+
+
 class StructureMappingSearch:
     """Search for mappings between superstructures of parent and child structures.
 
@@ -1683,44 +2091,6 @@ class StructureMappingSearch:
         self.opt: StructureMappingSearchOptions = opt
         """StructureMappingSearchOptions: Options for the search."""
 
-    def _get_max_n_atoms(self, parent: xtal.Structure, child: xtal.Structure):
-        """Get the maximum supercell size of the child structure based on the parent
-        structure.
-
-        If `child_max_supercell_size` is not set, the maximum supercell size is set to
-        the least common multiple of the number of atoms in the child and parent
-        structures.
-        """
-        if self.opt.max_n_atoms is not None:
-            return self.opt.max_n_atoms
-
-        n_atoms_parent = len(parent.atom_type())
-        n_atoms_child = len(child.atom_type())
-        return math.lcm(n_atoms_parent, n_atoms_child)
-
-    def _get_child_to_parent_vol(
-        self,
-        parent: xtal.Structure,
-        child: xtal.Structure,
-    ):
-        max_n_atoms = self._get_max_n_atoms(parent, child)
-        child_n_atoms = len(child.atom_type())
-        parent_n_atoms = len(parent.atom_type())
-
-        child_to_parent_vol = {}
-        child_vol = 1
-        while child_vol * child_n_atoms <= max_n_atoms:
-            child_superstructure_n_atoms = child_n_atoms * child_vol
-            _vol = child_superstructure_n_atoms / parent_n_atoms
-
-            # if parent_vol is integer, then it is a valid supercell size:
-            if _vol.is_integer():
-                child_to_parent_vol[child_vol] = int(_vol)
-
-            child_vol += 1
-
-        return child_to_parent_vol
-
     def _enable_symmetry_breaking_atom_cost(self):
         """Check if symmetry breaking atom cost is enabled based on the options."""
         return self.opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost"
@@ -1748,6 +2118,9 @@ class StructureMappingSearch:
         child: xtal.Structure,
     ) -> None:
         """Raise if atom types or fractions differ between parent and child."""
+
+        # This is only validation for the case of mapping to a parent structure,
+        # not just mapping to a parent prim.
 
         # Check atom types and stoichiometry
         parent_atom_types, parent_counts = np.unique(
@@ -1826,7 +2199,11 @@ class StructureMappingSearch:
             if self.opt.min_n_atoms < 1:
                 invalid_min_n_atoms_error(min_n_atoms=self.opt.min_n_atoms)
 
-            _max_n_atoms = self._get_max_n_atoms(parent, child)
+            _max_n_atoms = _get_max_n_atoms_for_parent_structure(
+                max_n_atoms=self.opt.max_n_atoms,
+                parent_structure=parent,
+                child=child,
+            )
             if _max_n_atoms < self.opt.min_n_atoms:
                 computed_msg = (
                     "(computed from lcm of atom counts)"
@@ -1861,116 +2238,6 @@ class StructureMappingSearch:
             isinstance(factor, float) for factor in dedup_factors
         ):
             invalid_deduplication_interpolation_factors_error(dedup_factors)
-
-    def _make_T_pairs(
-        self,
-        parent: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        min_n_atoms: int,
-        max_n_atoms: int,
-        child_T_list: Optional[list[np.ndarray]] = None,
-        parent_T_list: Optional[list[np.ndarray]] = None,
-    ):
-        """Make a list of (T_child, T_parent) pairs for the search.
-
-        Parameters
-        ----------
-        parent : xtal.Structure
-            The parent structure.
-        child : xtal.Structure
-            The child structure.
-        parent_prim : casmconfig.Prim
-            The primitive parent structure.
-        min_n_atoms : int
-            The minimum number of atoms in the superstructures that should be included
-            in the search.
-        max_n_atoms : int
-            The maximum number of atoms in the superstructures that should be included
-            in the search.
-        child_T_list : Optional[list[np.ndarray]] = None
-            For the child superstructures, a list of transformation matrices
-            :math:`T_{2}` to use. If None, the child superstructures are enumerated
-            based on the `min_n_atoms` and `max_n_atoms` options.
-        parent_T_list : Optional[list[np.ndarray]] = None
-            For the parent superstructures, a list of transformation matrices
-            :math:`T_{1}` to use. If None, the parent superstructures are enumerated
-            based on the `min_n_atoms` and `max_n_atoms` options.
-
-        Returns
-        -------
-        T_pairs: list[tuple[np.ndarray, np.ndarray]]
-            List of (T_child, T_parent) pairs.
-
-        """
-        # Results, list of (T_child, T_parent) pairs
-        T_pairs = []
-
-        # Parameters
-        child_crystal_point_group = xtal.make_structure_crystal_point_group(child)
-        child_n_atoms = len(child.atom_type())
-        child_to_parent_vol = self._get_child_to_parent_vol(
-            parent=parent,
-            child=child,
-        )
-
-        # If child_T_list is not provided, enumerate the child supercells
-        if child_T_list is None:
-            child_T_list = []
-
-            child_superlattices = xtal.enumerate_superlattices(
-                unit_lattice=child.lattice(),
-                point_group=child_crystal_point_group,
-                max_volume=floordiv(max_n_atoms, child_n_atoms),
-                min_volume=ceildiv(min_n_atoms, child_n_atoms),
-            )
-            for child_superlattice in child_superlattices:
-                child_T_list.append(
-                    xtal.make_transformation_matrix_to_super(
-                        unit_lattice=child.lattice(),
-                        superlattice=child_superlattice,
-                    )
-                )
-
-        # For each child superstructure...
-        for child_T in child_T_list:
-            child_vol = int(round(np.linalg.det(child_T)))
-
-            # If no valid parent volume, continue
-            if child_vol not in child_to_parent_vol:
-                continue
-            parent_vol = child_to_parent_vol[child_vol]
-
-            # Get the list of valid parent supercells
-            restricted_parent_T_list = []
-
-            # If parent_T_list is not provided, enumerate the parent supercells
-            if parent_T_list is None:
-                parent_superlattices = xtal.enumerate_superlattices(
-                    unit_lattice=parent.lattice(),
-                    point_group=parent_prim.crystal_point_group.elements,
-                    max_volume=parent_vol,
-                    min_volume=parent_vol,
-                )
-                for parent_superlattice in parent_superlattices:
-                    restricted_parent_T_list.append(
-                        xtal.make_transformation_matrix_to_super(
-                            unit_lattice=parent.lattice(),
-                            superlattice=parent_superlattice,
-                        )
-                    )
-
-            # If parent_T_list is provided, filter the parent supercells
-            else:
-                for parent_T in parent_T_list:
-                    if int(round(np.linalg.det(parent_T))) == parent_vol:
-                        restricted_parent_T_list.append(parent_T)
-
-            # Add the (child_T, parent_T) pairs
-            for parent_T in restricted_parent_T_list:
-                T_pairs.append((child_T, parent_T))
-
-        return T_pairs
 
     def __call__(
         self,
@@ -2072,7 +2339,11 @@ class StructureMappingSearch:
 
         ## Parameters
         if alloy is False:
-            _max_n_atoms = self._get_max_n_atoms(parent, child)
+            _max_n_atoms = _get_max_n_atoms_for_parent_structure(
+                parent_structure=parent,
+                child=child,
+                max_n_atoms=self.opt.max_n_atoms,
+            )
         else:
             _max_n_atoms = _get_max_n_atoms_for_parent_prim(
                 max_n_atoms=self.opt.max_n_atoms,
@@ -2132,8 +2403,8 @@ class StructureMappingSearch:
         else:
             if alloy is False:
                 # Get a list of (T_child, T_parent) pairs
-                T_pairs = self._make_T_pairs(
-                    parent=parent,
+                T_pairs = _make_T_pairs_for_parent_structure(
+                    parent_structure=parent,
                     child=child,
                     parent_prim=parent_prim,
                     min_n_atoms=_min_n_atoms,
@@ -2310,19 +2581,19 @@ class StructureMappingSearch:
             while search.size():
                 search.partition()
 
-            search_results, uuids, chain_orbits = self.add_new_results(
+            search_results, uuids, chain_orbits = _add_new_results(
+                opt=self.opt,
                 new_results=search.results().data(),
                 existing_results=search_results,
                 uuids=uuids,
                 chain_orbits=chain_orbits,
-                parent=parent,
                 child=child,
                 parent_prim=parent_prim,
                 k_best=_total_k_best,
                 cost_tol=_cost_tol,
             )
 
-            self.write_results(
+            _write_results(
                 search_results=search_results,
                 uuids=uuids,
                 parent=parent,
@@ -2357,275 +2628,15 @@ class StructureMappingSearch:
         print(f"# Results: {len(search_results)}\n")
         sys.stdout.flush()
 
-        self.tabulate_results(
+        _tabulate_results(
+            opt=self.opt,
             search_results=search_results,
             uuids=uuids,
-            parent=parent,
             child=child,
             parent_prim=parent_prim,
         )
 
         # Write the options history
-        self.write_options_history(results_dir=results_dir)
+        _write_options_history(opt=self.opt, results_dir=results_dir)
 
         return 0
-
-    def add_new_results(
-        self,
-        new_results: list[mapinfo.ScoredStructureMapping],
-        existing_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        chain_orbits: list[list[xtal.Structure]],
-        parent: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        k_best: int,
-        cost_tol: float,
-    ) -> tuple[
-        list[mapinfo.ScoredStructureMapping],
-        list[str],
-        list[list[xtal.Structure]],
-    ]:
-        """Add new results to the existing search results, deduplicating them.
-
-        Parameters
-        ----------
-        new_results : list[libcasm.mapping.info.ScoredStructureMapping]
-            The new results to add to the existing search results.
-        existing_results : list[libcasm.mapping.info.ScoredStructureMapping]
-            The existing search results to which the new results will be added.
-        uuids : list[str]
-            The UUIDs of the existing search results.
-        chain_orbits : list[list[xtal.Structure]]
-            The chain orbits of the existing search results.
-        parent : xtal.Structure
-            The parent structure.
-        child : xtal.Structure
-            The child structure.
-        parent_prim : casmconfig.Prim
-            The parent structure, as a Prim.
-        k_best : int
-            The number of best results to keep after deduplication. Any approximate ties
-            will also be kept.
-        cost_tol : float
-            The tolerance for comparing costs.
-
-        Returns
-        -------
-        search_results : list[libcasm.mapping.info.ScoredStructureMapping]
-            The updated list of search results after deduplication.
-        uuids : list[str]
-            The updated list of UUIDs corresponding to the search results.
-        chain_orbits : list[list[xtal.Structure]]
-            The updated list of chain orbits corresponding to the search results.
-
-        """
-        search_results = existing_results
-
-        # Deduplicate the new results
-        f_chain = self.opt.deduplication_interpolation_factors
-
-        def make_chain(structure_mapping):
-            return make_primitive_chain(
-                parent_lattice=parent_prim.xtal_prim.lattice(),
-                child=child,
-                structure_mapping=structure_mapping,
-                f_chain=f_chain,
-            )
-
-        def make_orbit(chain_prototype):
-            return make_chain_orbit(
-                chain_prototype=chain_prototype,
-                parent_prim=parent_prim,
-            )
-
-        while len(chain_orbits) < len(search_results):
-            smap = search_results[len(chain_orbits)]
-            chain_orbits.append(make_orbit(make_chain(smap)))
-            uuids.append(str(uuid.uuid4()))
-
-        if len(new_results) == 0:
-            return search_results, uuids, chain_orbits
-
-        for i, smap_new in enumerate(new_results):
-            primitive_chain = make_chain(smap_new)
-
-            # Check for duplicates:
-            found_duplicate = False
-            i_duplicate = 0
-            for smap_existing, chain_orbit_existing in zip(
-                search_results, chain_orbits
-            ):
-                if chain_is_in_orbit(primitive_chain, chain_orbit_existing):
-                    found_duplicate = True
-                    break
-                i_duplicate += 1
-
-            if found_duplicate:
-                smap_existing = search_results[i_duplicate]
-                scel_size_new = parent_supercell_size(smap_new)
-                scel_size_existing = parent_supercell_size(smap_existing)
-
-                prefer_new = False
-                if scel_size_new < scel_size_existing:
-                    prefer_new = True
-
-                # prefer smaller volume mappings
-                if prefer_new:
-                    search_results[i_duplicate] = smap_new
-                    uuids[i_duplicate] = str(uuid.uuid4())
-                    chain_orbits[i_duplicate] = make_orbit(primitive_chain)
-                else:
-                    continue
-            else:
-                search_results.append(smap_new)
-                uuids.append(str(uuid.uuid4()))
-                chain_orbits.append(make_orbit(primitive_chain))
-
-        # Sort the search results and chain orbits, by total cost
-        sys.stdout.flush()
-        isorted = [
-            x[0]
-            for x in sorted(enumerate(search_results), key=lambda x: x[1].total_cost())
-        ]
-        search_results = [search_results[i] for i in isorted]
-        uuids = [uuids[i] for i in isorted]
-        chain_orbits = [chain_orbits[i] for i in isorted]
-
-        # Keep only the k-best results
-        if len(search_results) > k_best:
-            next_index = k_best
-            while next_index < len(search_results):
-                next_cost = search_results[next_index].total_cost()
-                if math.isclose(
-                    search_results[k_best - 1].total_cost(), next_cost, abs_tol=cost_tol
-                ):
-                    next_index += 1
-                else:
-                    break
-
-            search_results = search_results[:(next_index)]
-            uuids = uuids[:(next_index)]
-            chain_orbits = chain_orbits[:(next_index)]
-
-        return search_results, uuids, chain_orbits
-
-    def write_results(
-        self,
-        search_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        parent: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        results_dir: pathlib.Path,
-    ) -> None:
-        """Write the results of the search."""
-        data = {
-            "parent": parent.to_dict(),
-            "child": child.to_dict(),
-            "parent_prim": parent_prim.to_dict(),
-            "mappings": [smap.to_dict() for smap in search_results],
-            "uuids": [x for x in uuids],
-        }
-        safe_dump(
-            data,
-            path=results_dir / "mappings.json",
-            force=True,
-            quiet=True,
-        )
-
-    def write_options_history(
-        self,
-        results_dir: pathlib.Path,
-    ) -> None:
-        options = read_optional(results_dir / "options_history.json", default=[])
-        options.append(self.opt.to_dict())
-        safe_dump(
-            options,
-            path=results_dir / "options_history.json",
-            force=True,
-            quiet=True,
-        )
-
-    def tabulate_results(
-        self,
-        search_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        parent: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-    ) -> str:
-        """Tabulate the results of the search."""
-
-        prec = 5
-        headers = [
-            "Index",
-            "TotCost",
-            "LatCost",
-            "AtmCost",
-            "Parent Vol., Grp., #Ops",
-            "Child Vol., Grp., #Ops",
-            "Mult.",
-            "UUID",
-        ]
-        f_chain = self.opt.deduplication_interpolation_factors
-        child_prim = casmconfig.Prim(xtal.Prim.from_atom_coordinates(structure=child))
-
-        data = []
-        for i, scored_structure_mapping in enumerate(search_results):
-            smap = scored_structure_mapping
-
-            latmap = smap.lattice_mapping()
-            T_parent = latmap.transformation_matrix_to_super()
-            parent_volume = abs(int(round(np.linalg.det(T_parent))))
-            T_child = make_child_transformation_matrix_to_super(
-                parent_lattice=parent_prim.xtal_prim.lattice(),
-                child_lattice=child.lattice(),
-                structure_mapping=scored_structure_mapping,
-            )
-            child_volume = abs(int(round(np.linalg.det(T_child))))
-
-            total_cost = f"{smap.total_cost():.{prec}f}"
-            lattice_cost = f"{smap.lattice_cost():.{prec}f}"
-            atom_cost = f"{smap.atom_cost():.{prec}f}"
-
-            chain_orbit = make_primitive_chain_orbit(
-                parent_prim=parent_prim,
-                child=child,
-                structure_mapping=smap,
-                f_chain=f_chain,
-            )
-            mult = len(chain_orbit)
-
-            parent_info = make_parent_supercell_info(
-                structure_mapping=smap,
-                parent_prim=parent_prim,
-            )
-            parent_grp = parent_info["spacegroup_type"]["international_short"]
-            fg_size = parent_info["factor_group_size"]
-
-            child_info = make_child_supercell_info(
-                T_child=T_child,
-                child_prim=child_prim,
-            )
-            child_grp = child_info["spacegroup_type"]["international_short"]
-            child_fg_size = child_info["factor_group_size"]
-
-            data.append(
-                [
-                    i,
-                    total_cost,
-                    lattice_cost,
-                    atom_cost,
-                    str(parent_volume) + ", " + parent_grp + ", " + str(fg_size),
-                    str(child_volume) + ", " + child_grp + ", " + str(child_fg_size),
-                    mult,
-                    uuids[i],
-                ]
-            )
-
-        print("Lattice cost method:", self.opt.lattice_mapping_cost_method)
-        print("Atom cost method:", self.opt.atom_mapping_cost_method)
-        print("Lattice cost weight:", self.opt.lattice_cost_weight)
-        print(tabulate(data, headers=headers, tablefmt="grid"))
-        print()
