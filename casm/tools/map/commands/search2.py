@@ -423,13 +423,19 @@ def run_search(args):
 
         # Read parent
         if args.alloy:
-            parent = casmconfig.Prim(
+            parent_prim = casmconfig.Prim(
                 xtal.Prim.from_dict(data=read_required(args.parent))
             )
+            parent_structure = None
+            print("Parent Prim:")
+            print(parent_prim)
         else:
-            parent = read_structure(path=args.parent, format=_get_parent_format(args))
-        print("Parent:")
-        print(parent)
+            parent_structure = read_structure(
+                path=args.parent, format=_get_parent_format(args)
+            )
+            parent_prim = None
+            print("Parent:")
+            print(parent_structure)
         print()
 
         # Read child
@@ -442,8 +448,9 @@ def run_search(args):
         options = _make_options(args)
 
         data = MappingSearchData(
-            parent=parent,
             child=child,
+            parent_structure=parent_structure,
+            parent_prim=parent_prim,
             options=options,
         )
 

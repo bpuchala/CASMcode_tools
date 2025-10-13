@@ -55,14 +55,15 @@ directory and a summary table is printed to the console.
 Results are written to:
 
     <results_dir>/
-    ├── mappings.json
-    └── options_history.json
+    └── mappings.json
 
 
 The `mappings.json` output file contains:
 
-    "parent": libcasm.xtal.Structure
+    "parent_structure": libcasm.xtal.Structure
         The parent structure.
+    "parent_prim": libcasm.prim.Prim
+        The parent prim.
     "child": libcasm.xtal.Structure
         The child structure.
     "mappings": list[libcasm.mapping.info.ScoredStructureMapping]
@@ -71,6 +72,8 @@ The `mappings.json` output file contains:
         child.
     "uuids": list[str]
         A list of UUIDs for the mappings, one per mapping.
+    "options_history": list[casm.tools.map.StructureMappingSearchOptions]
+        The options used for the current search.
 
 The `options_history.json` output file is a JSON list with the 
 history of options used for the search. When `casm-map search` 
@@ -356,21 +359,11 @@ def run_search(args):
 
     if args.prim:
         parent_prim = casmconfig.Prim.from_dict(data=read_required(args.prim))
-        # print("ParentPrim:")
-        # print(parent_prim)
-        # print()
     else:
         parent_prim = None
 
     parent = read_structure(path=args.parent, format=_get_parent_format(args))
-    # print("Parent:")
-    # print(parent)
-    # print()
-
     child = read_structure(path=args.child, format=_get_child_format(args))
-    # print("Child:")
-    # print(child)
-    # print()
 
     if args.options is not None:
         data = read_required(args.options)
@@ -421,7 +414,7 @@ def run_search(args):
         n_atoms_child = len(child.atom_type())
         n_atoms_lcm = math.lcm(n_atoms_parent, n_atoms_child)
 
-        results_dir = "results" if args.results_dir is None else args.results_dir
+        results_dir = args.results_dir
 
         data = read_optional(results_dir / "mappings.json", default=[])
         options_history = [

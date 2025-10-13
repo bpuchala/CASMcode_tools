@@ -45,12 +45,13 @@ def test_example_map_1_bcc_fcc(examples_dir, tmp_path):
     data = read_required(results_dir / "mappings.json")
 
     assert "child" in data
-    assert "parent" in data
+    assert "parent_structure" in data
+    assert "parent_prim" in data
     assert "mappings" in data
     assert "uuids" in data
     assert "options_history" in data
 
-    parent = Structure.from_dict(data["parent"])
+    parent = Structure.from_dict(data["parent_structure"])
     assert isinstance(parent, Structure)
 
     parent_xtal_prim = Prim.from_atom_coordinates(structure=parent)
@@ -110,12 +111,13 @@ def test_example_map_1_bcc_hcp(examples_dir, tmp_path):
     data = read_required(results_dir / "mappings.json")
 
     assert "child" in data
-    assert "parent" in data
+    assert "parent_structure" in data
+    assert "parent_prim" in data
     assert "mappings" in data
     assert "uuids" in data
     assert "options_history" in data
 
-    parent = Structure.from_dict(data["parent"])
+    parent = Structure.from_dict(data["parent_structure"])
     assert isinstance(parent, Structure)
 
     parent_xtal_prim = Prim.from_atom_coordinates(structure=parent)

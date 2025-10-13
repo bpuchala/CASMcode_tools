@@ -187,7 +187,7 @@ def kpoints_info(
     info: dict
         A dictionary containing:
 
-        .. python::
+        .. code-block:: python
 
             {
                 "total_kpoints": int,
