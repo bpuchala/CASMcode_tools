@@ -37,6 +37,15 @@ def floordiv(a, b):
     return a // b
 
 
+def vacancies_allowed(parent_prim: casmconfig.Prim) -> bool:
+    _allowed = False
+    for name, occ in parent_prim.xtal_prim.occupants().items():
+        if occ.is_vacancy():
+            _allowed = True
+            break
+    return _allowed
+
+
 def _get_max_n_atoms_for_parent_structure(
     max_n_atoms: Optional[int],
     parent_structure: xtal.Structure,
@@ -83,7 +92,7 @@ def _get_max_n_atoms_for_parent_prim(
         The maximum number of atoms to use when generating supercells of the child.
     """
     if max_n_atoms is not None:
-        return max(max_n_atoms, len(child.atom_type()))
+        return max_n_atoms
     else:
         return len(child.atom_type())
 
@@ -406,11 +415,13 @@ class ParentVolumeSearchOptions:
                 raise ValueError(
                     "Error in ParentVolumeSearchOptions: "
                     "'atoms_per_unitcell_range' must be a tuple of two positive "
-                    "numbers, where the first is less than or equal to the second."
+                    "numbers (> 0.0), where the first is less than or equal to the "
+                    "second."
                 )
-            _min_per, _max_per = self.atoms_per_unitcell_range
-            min_parent_vol = int(math.floor(n_child_atoms / _max_per))
-            max_parent_vol = int(math.ceil(n_child_atoms / _min_per))
+            _min_per, _max_per = atoms_per_unitcell_range
+            min_parent_vol = int(math.ceil(n_child_atoms / _max_per))
+            max_parent_vol = int(math.floor(n_child_atoms / _min_per))
+
             return (min_parent_vol, max_parent_vol)
 
         elif self.method == "point-defect-count":
@@ -474,7 +485,7 @@ class ParentVolumeSearchOptions:
 def _make_T_pairs_for_parent_prim(
     child: xtal.Structure,
     parent_prim: casmconfig.Prim,
-    child_atom_counts_of_parent_types: np.ndarray,
+    child_atom_count_of_parent_types: np.ndarray,
     min_atom_count_per_parent_unitcell: np.ndarray,
     max_atom_count_per_parent_unitcell: np.ndarray,
     min_n_atoms: int = 1,
@@ -495,7 +506,7 @@ def _make_T_pairs_for_parent_prim(
        provided, use `parent_T_list`. Otherwise, enumerate parent supercells based on
        `parent_vol_options`.
     3. Finally, filter out parent supercells that are impossible based on the
-       `child_atom_counts_of_parent_types`, `min_atom_count_per_parent_unitcell`, and
+       `child_atom_count_of_parent_types`, `min_atom_count_per_parent_unitcell`, and
        `max_atom_count_per_parent_unitcell` parameters.
        `
 
@@ -505,7 +516,7 @@ def _make_T_pairs_for_parent_prim(
         The child structure.
     parent_prim : casmconfig.Prim
         The primitive parent structure.
-    child_atom_counts_of_parent_types: np.ndarray
+    child_atom_count_of_parent_types: np.ndarray
         The number of atoms of each parent type in the child structure.
     min_atom_count_per_parent_unitcell: np.ndarray
         The minimum number of each parent type per parent unit cell.
@@ -554,11 +565,14 @@ def _make_T_pairs_for_parent_prim(
     if child_T_list is None:
         child_T_list = []
 
+        max_volume = floordiv(max_n_atoms, child_n_atoms)
+        min_volume = ceildiv(min_n_atoms, child_n_atoms)
+
         child_superlattices = xtal.enumerate_superlattices(
             unit_lattice=child.lattice(),
             point_group=child_crystal_point_group,
-            max_volume=floordiv(max_n_atoms, child_n_atoms),
-            min_volume=ceildiv(min_n_atoms, child_n_atoms),
+            max_volume=max_volume,
+            min_volume=min_volume,
         )
         for child_superlattice in child_superlattices:
             child_T_list.append(
@@ -570,16 +584,18 @@ def _make_T_pairs_for_parent_prim(
 
     # If parent_T_list is not provided, generate possible parent supercells for each
     # child supercell
-    for child_T in child_T_list:
+    for i_child, child_T in enumerate(child_T_list):
         child_vol = int(round(np.linalg.det(child_T)))
-        superchild_atom_counts = child_atom_counts_of_parent_types * child_vol
+        superchild_atom_count = child_atom_count_of_parent_types * child_vol
 
         # Get the list of valid parent supercells
 
         # If parent_T_list is not provided,
         # then enumerate parent supercells based on `parent_vol_options`
-        if parent_T_list is None:
-            parent_T_list = []
+        curr_parent_T_list = parent_T_list
+        if curr_parent_T_list is None:
+            curr_parent_T_list = []
+
             if parent_vol_options is None:
                 parent_vol_options = ParentVolumeSearchOptions()
             parent_vol_range = parent_vol_options.parent_vol_range(
@@ -587,14 +603,18 @@ def _make_T_pairs_for_parent_prim(
                 parent_prim=parent_prim,
                 child_vol=child_vol,
             )
+
+            if parent_vol_range[0] > parent_vol_range[1]:
+                invalid_parent_vol_range(child_vol, parent_vol_range)
+
             parent_superlattices = xtal.enumerate_superlattices(
                 unit_lattice=parent_prim.xtal_prim.lattice(),
                 point_group=parent_prim.crystal_point_group.elements,
-                max_volume=parent_vol_range[0],
-                min_volume=parent_vol_range[1],
+                max_volume=parent_vol_range[1],
+                min_volume=parent_vol_range[0],
             )
             for parent_superlattice in parent_superlattices:
-                parent_T_list.append(
+                curr_parent_T_list.append(
                     xtal.make_transformation_matrix_to_super(
                         unit_lattice=parent_prim.xtal_prim.lattice(),
                         superlattice=parent_superlattice,
@@ -604,16 +624,14 @@ def _make_T_pairs_for_parent_prim(
         # Filter parent_T_list based on the child atom counts and the
         # min/max atom counts per parent unit cell
         restricted_parent_T_list = []
-        for parent_T in parent_T_list:
+        for parent_T in curr_parent_T_list:
             parent_vol = int(round(np.linalg.det(parent_T)))
 
             # Check if the parent atom counts are within the min/max range
             if np.all(
-                superchild_atom_counts
-                >= min_atom_count_per_parent_unitcell * parent_vol
+                superchild_atom_count >= min_atom_count_per_parent_unitcell * parent_vol
             ) and np.all(
-                superchild_atom_counts
-                <= max_atom_count_per_parent_unitcell * parent_vol
+                superchild_atom_count <= max_atom_count_per_parent_unitcell * parent_vol
             ):
                 restricted_parent_T_list.append(parent_T)
 
@@ -631,13 +649,15 @@ class StructureMappingSearchOptions:
         self,
         max_n_atoms: Optional[int] = None,
         min_n_atoms: int = 1,
+        parent_vol_options: Optional[ParentVolumeSearchOptions] = None,
         child_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
         parent_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
         total_min_cost: float = 0.0,
         total_max_cost: float = 0.3,
         total_k_best: int = 1,
         no_remove_mean_displacement: bool = False,
-        fix_parent: bool = False,
+        fix_parent_supercell: bool = False,
+        fix_child_supercell: bool = False,
         lattice_mapping_min_cost: Optional[float] = 0.0,
         lattice_mapping_max_cost: Optional[float] = 1e20,
         lattice_mapping_k_best: Optional[int] = 10,
@@ -663,6 +683,12 @@ class StructureMappingSearchOptions:
         min_n_atoms : int = 1
             The minimum number of atoms in the superstructures that should be included
             in the search.
+        parent_vol_options : Optional[ParentVolumeSearchOptions] = None
+            Options for the parent supercell volumes to search over when the specific
+            supercells have not been given. If None, the default options are used,
+            which is to search a single parent supercell size based on the number of
+            atoms in the child structure and the number of sublattices in the
+            `parent_prim` which are occupied by default.
         child_transformation_matrix_to_super_list : Optional[list[np.ndarray]] = None
             If provided, overrides the `min_n_atoms` and `max_n_atoms` options to
             directly specify the transformation matrices to use for the child
@@ -681,12 +707,12 @@ class StructureMappingSearchOptions:
             current `k_best`-ranked result are also kept.
         no_remove_mean_displacement : bool = False
             If True, do not remove the mean displacement from the atom mapping.
-        fix_parent : bool = False
-            If True, map to the parent structure as provided and skip searching over
-            parent superstructures and lattice reorientations. The deformation
-            gradient is still calculated and atom mapping is still performed. Only
-            allowed if the number of atoms in the parent structure is the same as
-            the number of atoms in the child structure.
+        fix_parent_supercell : bool = False
+            If True, map to the parent structure lattice without searching over
+            superstructures.
+        fix_child_supercell : bool = False
+            If True, map from the child structure as provided and skip searching over
+            child superstructures.
         lattice_mapping_min_cost : float = 0.0
             Keep lattice mappings with cost >= min_cost. Used when
             `map_lattices_with_reorientation` is True.
@@ -713,10 +739,11 @@ class StructureMappingSearchOptions:
             "isotropic_disp_cost" or "symmetry_breaking_disp_cost".
         forced_on : Optional[dict[int, int]] = None
             A map of assignments `parent_atom_index: child_atom_index` that are forced
-            on. Indices begin at 0. Requires that `fix_parent` is True.
+            on. Indices begin at 0. Requires that `fix_parent_supercell` is True.
         forced_off : Optional[list[tuple[int, int]]] = None
             A list of tuples of assignments `(parent_atom_index, child_atom_index) that
-            are forced off. Indices begin at 0. Requires that `fix_parent` is True.
+            are forced off. Indices begin at 0. Requires that `fix_parent_supercell` is
+            True.
         lattice_cost_weight : float = 0.5
             The weight of the lattice cost in the total structure mapping cost.
         cost_tol : float = 1e-5
@@ -728,6 +755,7 @@ class StructureMappingSearchOptions:
         """
         self.min_n_atoms = min_n_atoms
         self.max_n_atoms = max_n_atoms
+        self.parent_vol_options = parent_vol_options
         self.child_transformation_matrix_to_super_list = (
             child_transformation_matrix_to_super_list
         )
@@ -739,7 +767,8 @@ class StructureMappingSearchOptions:
         self.total_max_cost = total_max_cost
         self.total_k_best = total_k_best
         self.no_remove_mean_displacement = no_remove_mean_displacement
-        self.fix_parent = fix_parent
+        self.fix_parent_supercell = fix_parent_supercell
+        self.fix_child_supercell = fix_child_supercell
         self.lattice_mapping_min_cost = lattice_mapping_min_cost
         self.lattice_mapping_max_cost = lattice_mapping_max_cost
         self.lattice_mapping_k_best = lattice_mapping_k_best
@@ -760,6 +789,11 @@ class StructureMappingSearchOptions:
         return {
             "min_n_atoms": self.min_n_atoms,
             "max_n_atoms": self.max_n_atoms,
+            "parent_vol_options": (
+                self.parent_vol_options.to_dict()
+                if self.parent_vol_options is not None
+                else None
+            ),
             "child_transformation_matrix_to_super_list": (
                 [x.tolist() for x in self.child_transformation_matrix_to_super_list]
                 if self.child_transformation_matrix_to_super_list is not None
@@ -774,7 +808,8 @@ class StructureMappingSearchOptions:
             "total_max_cost": self.total_max_cost,
             "total_k_best": self.total_k_best,
             "no_remove_mean_displacement": self.no_remove_mean_displacement,
-            "fix_parent": self.fix_parent,
+            "fix_parent_supercell": self.fix_parent_supercell,
+            "fix_child_supercell": self.fix_child_supercell,
             "lattice_mapping_min_cost": self.lattice_mapping_min_cost,
             "lattice_mapping_max_cost": self.lattice_mapping_max_cost,
             "lattice_mapping_k_best": self.lattice_mapping_k_best,
@@ -797,6 +832,11 @@ class StructureMappingSearchOptions:
         return StructureMappingSearchOptions(
             max_n_atoms=data["max_n_atoms"],
             min_n_atoms=data["min_n_atoms"],
+            parent_vol_options=(
+                ParentVolumeSearchOptions.from_dict(data["parent_vol_options"])
+                if data["parent_vol_options"] is not None
+                else None
+            ),
             child_transformation_matrix_to_super_list=(
                 [np.array(x) for x in data["child_transformation_matrix_to_super_list"]]
                 if data["child_transformation_matrix_to_super_list"] is not None
@@ -814,7 +854,8 @@ class StructureMappingSearchOptions:
             total_max_cost=data["total_max_cost"],
             total_k_best=data["total_k_best"],
             no_remove_mean_displacement=data["no_remove_mean_displacement"],
-            fix_parent=data["fix_parent"],
+            fix_parent_supercell=data["fix_parent_supercell"],
+            fix_child_supercell=data["fix_child_supercell"],
             lattice_mapping_min_cost=data["lattice_mapping_min_cost"],
             lattice_mapping_max_cost=data["lattice_mapping_max_cost"],
             lattice_mapping_k_best=data["lattice_mapping_k_best"],
@@ -988,17 +1029,24 @@ class MappingSearchData:
         return _mapping_costs
 
     @property
-    def parent_atom_types(self):
-        """list[str]: The list of atom types in the parent structure, sorted."""
+    def parent_structure_atom_types(self):
+        """Optional[list[str]]: The list of atom types in the parent structure, sorted,
+        if the parent structure exists."""
         if self.parent_structure is not None:
             parent_atom_types = set(self.parent_structure.atom_type())
+            return sorted(list(parent_atom_types))
         else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            parent_atom_types = {name for site_dof in occ_dof for name in site_dof}
+            return None
+
+    @property
+    def parent_prim_atom_types(self):
+        """list[str]: The list of atom types in the parent prim, sorted."""
+        occ_dof = self.parent_prim.xtal_prim.occ_dof()
+        parent_atom_types = {name for site_dof in occ_dof for name in site_dof}
         return sorted(list(parent_atom_types))
 
     @property
-    def parent_atom_frac(self):
+    def parent_structure_atom_frac(self):
         """Optional[np.ndarray]: The fraction of each atom type in the parent, in
         order corresponding to `parent_atom_types`.
 
@@ -1007,7 +1055,7 @@ class MappingSearchData:
             return None
         if len(self.parent_structure.atom_type()) == 0:
             return None
-        _atom_types = self.parent_atom_types
+        _atom_types = self.parent_prim_atom_types
         _atom_count = [0] * len(_atom_types)
         for atom_type in self.parent_structure.atom_type():
             _atom_count[_atom_types.index(atom_type)] += 1
@@ -1018,33 +1066,25 @@ class MappingSearchData:
     @property
     def min_atom_count_per_parent_unitcell(self):
         """np.array: The minimum number of atoms per parent unit cell of each type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
+        order corresponding to `parent_prim_atom_types`."""
+        _atom_types = self.parent_prim_atom_types
         _atom_count = [0] * len(_atom_types)
-        if self.parent_structure is not None:
-            for atom_type in self.parent_structure.atom_type():
-                _atom_count[_atom_types.index(atom_type)] += 1
-        else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            for site_dof in occ_dof:
-                if len(site_dof) == 1:
-                    _atom_count[_atom_types.index(site_dof[0])] += 1
+        occ_dof = self.parent_prim.xtal_prim.occ_dof()
+        for site_dof in occ_dof:
+            if len(site_dof) == 1:
+                _atom_count[_atom_types.index(site_dof[0])] += 1
         return np.array(_atom_count)
 
     @property
     def max_atom_count_per_parent_unitcell(self):
         """np.array: The maximum number of atoms per parent unit cell of each type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
+        order corresponding to `parent_prim_atom_types`."""
+        _atom_types = self.parent_prim_atom_types
         _atom_count = [0] * len(_atom_types)
-        if self.parent_structure is not None:
-            for atom_type in self.parent_structure.atom_type():
-                _atom_count[_atom_types.index(atom_type)] += 1
-        else:
-            occ_dof = self.parent_prim.xtal_prim.occ_dof()
-            for site_dof in occ_dof:
-                for name in site_dof:
-                    _atom_count[_atom_types.index(name)] += 1
+        occ_dof = self.parent_prim.xtal_prim.occ_dof()
+        for site_dof in occ_dof:
+            for name in site_dof:
+                _atom_count[_atom_types.index(name)] += 1
         return np.array(_atom_count)
 
     @property
@@ -1053,7 +1093,7 @@ class MappingSearchData:
         order corresponding to `child_atom_types`."""
         _atom_types = self.child_atom_types
         _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
+        for atom_type in self.child.atom_type():
             index = _atom_types.index(atom_type)
             if index >= 0:
                 _atom_count[index] += 1
@@ -1062,10 +1102,10 @@ class MappingSearchData:
     @property
     def child_atom_count_of_parent_types(self):
         """np.array: The number of atoms in the child of each parent type, in
-        order corresponding to `parent_atom_types`."""
-        _atom_types = self.parent_atom_types
+        order corresponding to `parent_prim_atom_types`."""
+        _atom_types = self.parent_prim_atom_types
         _atom_count = [0] * len(_atom_types)
-        for atom_type in self.child_structure.atom_type():
+        for atom_type in self.child.atom_type():
             index = _atom_types.index(atom_type)
             if index >= 0:
                 _atom_count[index] += 1
@@ -1106,11 +1146,17 @@ class MappingSearchData:
 
         """
         if self.parent_structure is not None:
-            if set(self.parent_atom_types) != set(self.child_atom_types):
-                atom_types_mismatch_error(self.parent_atom_types, self.child_atom_types)
+            if set(self.parent_structure_atom_types) != set(self.child_atom_types):
+                atom_types_mismatch_error(
+                    self.parent_structure_atom_types, self.child_atom_types
+                )
         else:
-            if not set(self.child_atom_types).issubset(set(self.parent_atom_types)):
-                atom_types_mismatch_error(self.parent_atom_types, self.child_atom_types)
+            if not set(self.child_atom_types).issubset(
+                set(self.parent_prim_atom_types)
+            ):
+                atom_types_mismatch_error(
+                    self.parent_prim_atom_types, self.child_atom_types
+                )
 
     def validate_atom_frac(self):
         """Validate the parent and child atom fractions are consistent.
@@ -1119,9 +1165,11 @@ class MappingSearchData:
         structure and child structure are the same.
         """
         if self.parent_structure is not None:
-            if not np.allclose(self.parent_atom_frac, self.child_atom_frac, atol=1e-5):
+            if not np.allclose(
+                self.parent_structure_atom_frac, self.child_atom_frac, atol=1e-5
+            ):
                 atom_fraction_mismatch_error(
-                    self.parent_atom_frac, self.child_atom_frac
+                    self.parent_structure_atom_frac, self.child_atom_frac
                 )
 
     def validate_forced_on(self):
@@ -1149,23 +1197,23 @@ class MappingSearchData:
                     allowed_types=_allowed[parent_site_index],
                 )
 
-    def validate_fix_parent(self):
-        """Validate `fix_parent` option, if the parent_structure is given
+    def validate_fix_parent_supercell(self):
+        """Validate `fix_parent_supercell` option, if the parent_structure is given
 
-        If `parent_structure` is not None, check that the `--fix-parent` option is used
-        only when the number of atoms in the parent structure is the same as the number
-        of atoms in the child structure.
+        If `parent_structure` is not None, check that the `--fix-parent-supercell`
+        option is used only when the number of atoms in the parent structure is the
+        same as the number of atoms in the child structure.
 
         If `parent_structure` is None, this method currently does nothing.
 
         """
         if self.parent_structure is None:
             return
-        if self.opt.fix_parent:
-            child_n_atoms = len(self.child.atom_type())
-            parent_n_atoms = len(self.parent_structure.atom_type())
-            if child_n_atoms != parent_n_atoms:
-                invalid_fix_parent_error()
+        # if self.opt.fix_parent_supercell:
+        #     child_n_atoms = len(self.child.atom_type())
+        #     parent_n_atoms = len(self.parent_structure.atom_type())
+        #     if child_n_atoms != parent_n_atoms:
+        #         invalid_fix_parent_supercell_error()
 
     def notify_if_non_primitive(self):
         """Print a notice if the parent or child is not primitive, and write
@@ -1429,14 +1477,14 @@ def atom_types_mismatch_error(parent_atom_types, child_atom_types) -> None:
     sys.exit(1)
 
 
-def atom_fraction_mismatch_error(parent_atom_frac, child_atom_frac) -> None:
+def atom_fraction_mismatch_error(parent_structure_atom_frac, child_atom_frac) -> None:
     """Print an error message if the parent and child atom types do not match."""
     error = f"""
     ################################################################################
     # Error: Parent and child structures have different atom fractions             #
     #                                                                              #
 
-    - Parent atom fraction: {parent_atom_frac}
+    - Parent atom fraction: {parent_structure_atom_frac}
     - Child atom fraction: {child_atom_frac}
 
     # Stopping...                                                                  #
@@ -1474,18 +1522,53 @@ allowed_types={allowed_types}
     sys.exit(1)
 
 
-def invalid_fix_parent_error() -> None:
-    """Print an error message if the `--fix-parent` option is used with a parent and
-    child structure that have different numbers of atoms."""
+def invalid_fix_parent_supercell_error() -> None:
+    """Print an error message if the `--fix-parent-supercell` is given but the
+    parent_structure is None."""
 
     error = """
 ################################################################################
-# Error: --fix-parent requires parent and child w/ same number of atoms.       #
+# Error: Using --fix-parent-supercell without providing --parent.              #
 #                                                                              #
-# The `--fix-parent` option is used to map to the parent structure as          #
-# provided, without searching over parent superstructures and lattice          #
-# reorientations. It is only allowed if the number of atoms in the parent      #
-# structure is the same as the number of atoms in the child structure.         #
+# Stopping...                                                                  #
+################################################################################
+"""
+    print(error)
+    sys.exit(1)
+
+
+def invalid_parent_vol_range(child_vol, parent_vol_range) -> None:
+    """Print an error message if the parent volume range is invalid."""
+
+    error = f"""
+################################################################################
+# Error: Parent volume options resulted in an invalid range.                   #
+#
+
+For child volume = {child_vol},
+the parent volume range is {parent_vol_range}
+
+
+#                                                                              #
+# Check --parent-atoms-per-unitcell-range or --parent-volume-range             #
+#                                                                              #
+# Stopping...                                                                  #
+################################################################################
+"""
+    print(error)
+    sys.exit(1)
+
+
+def invalid_fix_parent_and_child_supercell_error() -> None:
+    """Print an error message if the `--fix-parent-supercell` and
+    `--fix-child-supercell` options are used with a parent and child structure that
+    have different numbers of atoms."""
+
+    error = """
+################################################################################
+# Error: If the prim doesn't allow vacancies, using --fix-parent-supercell     #
+# with --fix-child-supercell requires parent and child w/ same number of       #
+# atoms.                                                                       #
 #                                                                              #
 # Stopping...                                                                  #
 ################################################################################
@@ -1865,7 +1948,6 @@ def _tabulate_results(
 
 
 def _add_new_results(
-    opt: StructureMappingSearchOptions,
     new_results: list[mapinfo.ScoredStructureMapping],
     existing_results: list[mapinfo.ScoredStructureMapping],
     uuids: list[str],
@@ -1874,6 +1956,7 @@ def _add_new_results(
     parent_prim: casmconfig.Prim,
     k_best: int,
     cost_tol: float,
+    deduplication_interpolation_factors: list[float],
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -1904,6 +1987,8 @@ def _add_new_results(
         will also be kept.
     cost_tol : float
         The tolerance for comparing costs.
+    deduplication_interpolation_factors : list[float]
+        Interpolation factors to use for deduplication.
 
     Returns
     -------
@@ -1918,7 +2003,7 @@ def _add_new_results(
     search_results = existing_results
 
     # Deduplicate the new results
-    f_chain = opt.deduplication_interpolation_factors
+    f_chain = deduplication_interpolation_factors
 
     def make_chain(structure_mapping):
         return make_primitive_chain(
@@ -2037,7 +2122,7 @@ def _write_results(
 
     """
     data = {
-        "parent_structure": parent.to_dict(),
+        "parent_structure": parent.to_dict() if parent is not None else None,
         "child": child.to_dict(),
         "parent_prim": parent_prim.to_dict(),
         "mappings": [smap.to_dict() for smap in search_results],
@@ -2067,7 +2152,7 @@ def _validate_options_for_parent_structure(
         parent_structure.atom_type(), return_counts=True
     )
     total_atoms = np.sum(parent_counts)
-    parent_atom_frac = parent_counts / total_atoms
+    parent_structure_atom_frac = parent_counts / total_atoms
 
     child_atom_types, child_counts = np.unique(child.atom_type(), return_counts=True)
     total_atoms = np.sum(child_counts)
@@ -2081,10 +2166,10 @@ def _validate_options_for_parent_structure(
         print("Stopping")
         sys.exit(1)
 
-    if not np.allclose(parent_atom_frac, child_atom_frac):
+    if not np.allclose(parent_structure_atom_frac, child_atom_frac):
         print("Error: Parent and child structures have different atom fractions")
         print(f"- Atom types: {parent_atom_types}")
-        print(f"- Parent atom fraction: {parent_atom_frac}")
+        print(f"- Parent atom fraction: {parent_structure_atom_frac}")
         print(f"- Child atom fraction: {child_atom_frac}")
         print()
         print("Stopping")
@@ -2103,13 +2188,11 @@ def _validate_options_for_parent_structure(
                     allowed_types=_allowed[parent_site_index],
                 )
 
-    if opt.fix_parent:
-        child_n_atoms = len(child.atom_type())
-        parent_n_atoms = len(parent_structure.atom_type())
-        if child_n_atoms != parent_n_atoms:
-            invalid_fix_parent_error()
+    if opt.fix_parent_supercell:
+        if parent_structure is None:
+            invalid_fix_parent_supercell_error()
 
-    else:
+    if not opt.fix_parent_supercell:
         # Print notice if parent or child are not primitive, and write the
         # primitive structures
         primitive_parent = xtal.make_primitive_structure(parent_structure)
@@ -2174,14 +2257,29 @@ def _validate_options_for_parent_structure(
         invalid_deduplication_interpolation_factors_error(dedup_factors)
 
 
-def map_child_to_parent_structure(
+def _validate_options_for_parent_prim(
     opt: StructureMappingSearchOptions,
-    parent_structure: xtal.Structure,
+    parent_structure: Optional[xtal.Structure],
     parent_prim: casmconfig.Prim,
     child: xtal.Structure,
+) -> None:
+    # TODO
+
+    if opt.fix_parent_supercell:
+        if parent_structure is None:
+            invalid_fix_parent_supercell_error()
+
+    return
+
+
+def _mapping_impl(
+    opt: StructureMappingSearchOptions,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    parent_structure: Optional[xtal.Structure] = None,
     existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
     existing_uuids: Optional[list[str]] = None,
-    existing_chain_orbits: Optional[list[list[list[xtal.Structure]]]] = None,
+    chain_orbits: Optional[list[list[list[xtal.Structure]]]] = None,
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -2192,25 +2290,64 @@ def map_child_to_parent_structure(
     This function implements the core structure mapping search algorithm,
     finding mappings between superstructures of the parent and child.
 
+    Notes
+    -----
+
+    This method can be used in one of several modes:
+
+    1a) Map a child structure to a parent structure:
+       - Requires child, parent_structure, and parent_prim
+       - Set `opt.fix_supercell=False` (default)
+    1b) Map a child structure to a parent superstructure with a particular supercell:
+       - Requires child, parent_structure, and parent_prim
+       - Set `opt.fix_supercell=True`
+    1c) Map a child structure to a particular parent superstructure and force some atom
+       mappings on / off:
+       - Requires child, parent_structure, and parent_prim
+       - Set `opt.fix_supercell=True`
+       - Set `opt.forced_on` and/or `opt.forced_off` to force
+         particular atom mappings on or off.
+    2a) Map a child structure to any derivative structure of a prim:
+       - Requires child, parent_prim
+       - Set `opt.fix_supercell=True`
+    2b) Map a child structure to any derivative structure of a prim that
+        has a particular supercell:
+    2c) Map a child structure to any derivative structure of a prim that
+        has a particular supercell and force some atom mappings on / off:
+
     Parameters
     ----------
     opt : StructureMappingSearchOptions
-        Options for the search.
-    parent_structure : xtal.Structure
-        The parent structure.
-    parent_prim : casmconfig.Prim
-        The parent primitive structure. Used for determining allowed occupants.
-        If the parent structure represents a specific configuration (not an alloy),
-        this should be created from the parent structure. If mapping to an alloy,
-        this should be the actual prim with multiple allowed occupants per site.
+        Options for the search. See :class:`StructureMappingSearchOptions` for details.
     child : xtal.Structure
         The child structure.
+    parent_prim : casmconfig.Prim
+        The parent primitive structure. This specifies the set of allowed solutions. If
+        the mapping should be to a particular parent structure, this should only
+        allow a single occupant per sublattice. If multiple occupants are allowed per
+        sublattice, the mapping will be to any derivative structure of the prim.
+
+        When mapping to a particular parent structure, it can be constructed using
+
+        .. code-block:: python
+
+            import libcasm.configuration as casmconfig
+            import libcasm.xtal as xtal
+
+            casmconfig.Prim(
+                xtal_prim=xtal.Prim.from_atom_coordinates(
+                    structure=parent_structure,
+                )
+            )
+
+    parent_structure : Optional[xtal.Structure] = None
+        The parent structure, if mapping to a particular structure or supercell.
     existing_results : Optional[list[mapinfo.ScoredStructureMapping]] = None
         Existing mapping results to merge with new results. Default is [].
     existing_uuids : Optional[list[str]] = None
         UUIDs for existing results. Default is [].
-    existing_chain_orbits : Optional[list[list[list[xtal.Structure]]]] = None
-        Chain orbits for existing results used in deduplication. Default is [].
+    chain_orbits : list[list[list[xtal.Structure]]] = None
+        Chain orbits for deduplication, if any exist from previous searches.
 
     Returns
     -------
@@ -2226,9 +2363,10 @@ def map_child_to_parent_structure(
     This mapping search is limited to the case where the parent and child structures:
 
     - have the same atom types
-    - have the same atom fractions (unless mapping to an alloy with opt.fix_parent=True)
+    - have the same atom fractions (unless mapping to an alloy with
+      opt.fix_parent_supercell=True)
 
-    The search can be constrained by various options in `opt`:
+    The search can be constrained by various options in `data.options`:
 
     - min / max number of atoms
     - parent / child supercells used
@@ -2240,6 +2378,18 @@ def map_child_to_parent_structure(
     - deduplication interpolation factors
 
     """
+    search_results = existing_results if existing_results is not None else []
+    uuids = existing_uuids if existing_uuids is not None else []
+    chain_orbits = chain_orbits if chain_orbits is not None else []
+
+    if len(search_results) != len(uuids):
+        raise ValueError("Length of data.mappings and data.uuids must be the same.")
+    if len(chain_orbits) != 0:
+        if len(chain_orbits) != len(search_results):
+            raise ValueError(
+                "Length of chain_orbits must be the same as data.mappings if not empty."
+            )
+
     # Determine if mapping to alloy (parent_prim has multiple allowed occupants)
     alloy = False
     occ_dof = parent_prim.xtal_prim.occ_dof()
@@ -2248,27 +2398,23 @@ def map_child_to_parent_structure(
             alloy = True
             break
 
-    # Validate that if mapping to alloy, fix_parent must be True
-    if alloy and not opt.fix_parent:
-        raise NotImplementedError(
-            "Mapping to a prim is only supported with the --fix-parent option."
-        )
-
-    # Initialize results
-    search_results = list(existing_results)
-    uuids = list(existing_uuids)
-    chain_orbits = list(existing_chain_orbits)
-
     # Validate options
-    if alloy is False:
+    if not alloy:
         _validate_options_for_parent_structure(
             opt=opt,
             parent_structure=parent_structure,
             child=child,
         )
+    else:
+        _validate_options_for_parent_prim(
+            opt=opt,
+            parent_structure=parent_structure,
+            parent_prim=parent_prim,
+            child=child,
+        )
 
     ## Parameters
-    if alloy is False:
+    if not alloy:
         _max_n_atoms = _get_max_n_atoms_for_parent_structure(
             parent_structure=parent_structure,
             child=child,
@@ -2279,6 +2425,8 @@ def map_child_to_parent_structure(
             max_n_atoms=opt.max_n_atoms,
             child=child,
         )
+    _fix_parent_supercell = opt.fix_parent_supercell
+    _fix_child_supercell = opt.fix_child_supercell
     _min_n_atoms = opt.min_n_atoms
     _child_T_list = opt.child_transformation_matrix_to_super_list
     _parent_T_list = opt.parent_transformation_matrix_to_super_list
@@ -2302,10 +2450,36 @@ def map_child_to_parent_structure(
         lattice_cost_weight=opt.lattice_cost_weight
     )
     _cost_tol = opt.cost_tol
+    _deduplication_interpolation_factors = opt.deduplication_interpolation_factors
+    _parent_vol_options = opt.parent_vol_options
 
     ## Fixed parameters
     _infinity = 1e20
     _atom_to_site_cost_future_f = mapsearch.make_atom_to_site_cost_future
+
+    # ! No use of `opt` past this point; use local variables only !
+
+    # Construct chain_orbits if not provided
+    f_chain = _deduplication_interpolation_factors
+
+    def make_chain(structure_mapping):
+        return make_primitive_chain(
+            parent_lattice=parent_prim.xtal_prim.lattice(),
+            child=child,
+            structure_mapping=structure_mapping,
+            f_chain=f_chain,
+        )
+
+    def make_orbit(chain_prototype):
+        return make_chain_orbit(
+            chain_prototype=chain_prototype,
+            parent_prim=parent_prim,
+        )
+
+    while len(chain_orbits) < len(search_results):
+        smap = search_results[len(chain_orbits)]
+        chain_orbits.append(make_orbit(make_chain(smap)))
+        uuids.append(str(uuid.uuid4()))
 
     ## Create a parent structure search data object.
     parent_search_data = mapsearch.PrimSearchData(
@@ -2319,55 +2493,103 @@ def map_child_to_parent_structure(
         override_structure_factor_group=None,
     )
 
-    if opt.fix_parent:
-        if alloy is False:
-            I_matrix = np.eye(3, dtype="int")
-            T_pairs = [(I_matrix, I_matrix)]
-        else:
-            # If fixing the parent, we only need one pair of transformation matrices
-            # (identity for both child and parent).
-            I_matrix = np.eye(3, dtype="int")
-            T_parent = xtal.make_transformation_matrix_to_super(
-                superlattice=parent_structure.lattice(),
-                unit_lattice=parent_prim.xtal_prim.lattice(),
-            )
-            T_pairs = [(I_matrix, T_parent)]
-    else:
-        if alloy is False:
-            # Get a list of (T_child, T_parent) pairs
-            T_pairs = _make_T_pairs_for_parent_structure(
-                parent_structure=parent_structure,
-                child=child,
-                parent_prim=parent_prim,
-                min_n_atoms=_min_n_atoms,
-                max_n_atoms=_max_n_atoms,
-                child_T_list=_child_T_list,
-                parent_T_list=_parent_T_list,
-            )
-        else:
-            raise NotImplementedError(
-                "Alloy structures are only supported with the --fix-parent option."
-            )
+    ## Construct list of (T_child, T_parent) pairs to search over.
+    if _fix_parent_supercell and _fix_child_supercell:
+
+        if not vacancies_allowed(parent_prim):
+            parent_n_atoms = len(parent_structure.atom_type())
+            child_n_atoms = len(child.atom_type())
+            if parent_n_atoms != child_n_atoms:
+                invalid_fix_parent_and_child_supercell_error()
+            _min_n_atoms = parent_n_atoms
+            _max_n_atoms = parent_n_atoms
+
+    if _fix_child_supercell:
+
+        if not alloy:
+            child_n_atoms = len(child.atom_type())
+            _min_n_atoms = child_n_atoms
+            _max_n_atoms = child_n_atoms
+
+        T_child = xtal.make_transformation_matrix_to_super(
+            superlattice=child.lattice(),
+            unit_lattice=init_child_structure_data.lattice(),
+        )
+
+        _child_T_list = [T_child]
+
+    if _fix_parent_supercell:
+
+        if not alloy:
+            parent_n_atoms = len(parent_structure.atom_type())
+            _min_n_atoms = parent_n_atoms
+            _max_n_atoms = parent_n_atoms
+
+        T_parent = xtal.make_transformation_matrix_to_super(
+            superlattice=parent_structure.lattice(),
+            unit_lattice=parent_prim.xtal_prim.lattice(),
+        )
+
+        _parent_T_list = [T_parent]
+
+    data = MappingSearchData(
+        child=child,
+        parent_structure=parent_structure,
+        parent_prim=parent_prim,
+        options=opt,
+    )
+
+    # parent_vol_options = ParentVolumeSearchOptions(
+    #     method="atoms-per-unitcell",
+    #     atoms_per_unitcell_range=(0.8, 1.0),
+    # )
+    #
+    # print(
+    #     "min_atom_count_per_parent_unitcell:",
+    #     data.min_atom_count_per_parent_unitcell,
+    # )
+    # print(
+    #     "max_atom_count_per_parent_unitcell:",
+    #     data.max_atom_count_per_parent_unitcell,
+    # )
+    # parent_vol_options = None
+
+    T_pairs = _make_T_pairs_for_parent_prim(
+        child=child,
+        parent_prim=parent_prim,
+        child_atom_count_of_parent_types=data.child_atom_count_of_parent_types,
+        min_atom_count_per_parent_unitcell=data.min_atom_count_per_parent_unitcell,
+        max_atom_count_per_parent_unitcell=data.max_atom_count_per_parent_unitcell,
+        min_n_atoms=_min_n_atoms,
+        max_n_atoms=_max_n_atoms,
+        child_T_list=_child_T_list,
+        parent_T_list=_parent_T_list,
+        parent_vol_options=_parent_vol_options,
+    )
 
     total = len(T_pairs)
     print(f"Beginning search over {total} parent / child superstructure pairs...")
     print()
 
+    # Variables used in the loop:
     last_child_T = None
     child_structure_data = None
-
-    n_atoms = 0
-    if len(T_pairs):
-        # Get the number of atoms in the child structure
-        child_vol = int(round(np.linalg.det(T_pairs[0][0])))
-        child_n_atoms = len(child.atom_type())
-        n_atoms = child_n_atoms * child_vol
     min_total_cost = 0.0
     max_total_cost = 0.0
 
     for i_pair, _pair in enumerate(T_pairs):
 
         child_T, parent_T = _pair
+
+        # print("----------------------------------------")
+        # print(f"Searching pair {i_pair + 1} of {total}:")
+        # print("Child supercell transformation matrix:")
+        # print(child_T)
+        # print("Parent supercell transformation matrix:")
+        # print(parent_T)
+        # print("parent supercell volume:", int(round(np.linalg.det(parent_T))))
+        # print()
+
         if last_child_T is None or not np.allclose(child_T, last_child_T):
             child_structure_data = mapsearch.make_superstructure_data(
                 prim_structure_data=init_child_structure_data,
@@ -2393,7 +2615,8 @@ def map_child_to_parent_structure(
             cost_tol=_cost_tol,
         )
 
-        if opt.fix_parent:
+        # Perform lattice mapping between parent and child supercells
+        if _fix_parent_supercell:
             lattice_mapping = mapmethods.map_lattices_without_reorientation(
                 lattice1=parent_search_data.prim_lattice(),
                 lattice2=child_structure_data.lattice(),
@@ -2433,7 +2656,7 @@ def map_child_to_parent_structure(
             )
 
             lattice_mappings = mapmethods.map_lattices(
-                lattice1=parent_structure.lattice(),
+                lattice1=parent_search_data.prim().lattice(),
                 lattice2=child_structure_data.lattice(),
                 transformation_matrix_to_super=parent_T,
                 lattice1_point_group=parent_search_data.prim_crystal_point_group(),
@@ -2446,6 +2669,7 @@ def map_child_to_parent_structure(
                 cost_tol=_cost_tol,
             )
 
+        # For each lattice mapping, generate possible atom mappings
         for scored_lattice_mapping in lattice_mappings:
             lattice_mapping_data = mapsearch.LatticeMappingSearchData(
                 prim_data=parent_search_data,
@@ -2469,15 +2693,7 @@ def map_child_to_parent_structure(
                         )
 
             # for each lattice mapping, generate possible translations
-            if not _enable_remove_mean_displacement:
-                # If mean displacement removal is disabled, then we need info
-                # on which parent/atom mappings to force on. (We could also allow
-                # generating every combination here.)
-                if len(_forced_on) == 0:
-                    raise ValueError(
-                        "If --no-remove-mean-displacement is set, "
-                        "the --forced-on option must be set."
-                    )
+            if len(_forced_on):
                 # If forced_on is set, also use parent/child pairs to generate
                 # trial translations
                 trial_translations = []
@@ -2504,11 +2720,12 @@ def map_child_to_parent_structure(
                     forced_off=_forced_off,
                 )
 
+        # Partition the queue of possible mappings, generating new next-best mappings
         while search.size():
             search.partition()
 
+        # Add new results to existing results, deduplicating them
         search_results, uuids, chain_orbits = _add_new_results(
-            opt=opt,
             new_results=search.results().data(),
             existing_results=search_results,
             uuids=uuids,
@@ -2517,8 +2734,10 @@ def map_child_to_parent_structure(
             parent_prim=parent_prim,
             k_best=_total_k_best,
             cost_tol=_cost_tol,
+            deduplication_interpolation_factors=_deduplication_interpolation_factors,
         )
 
+        # Update the min/max total costs
         if len(search_results) > 0:
             min_total_cost = search_results[0].total_cost()
             max_total_cost = search_results[-1].total_cost()
@@ -2532,11 +2751,163 @@ def map_child_to_parent_structure(
             ),
             end="",
         )
+        sys.stdout.flush()
 
     print()
     print()
 
     return search_results, uuids, chain_orbits
+
+
+def map_to_structure(
+    opt: StructureMappingSearchOptions,
+    child: xtal.Structure,
+    parent_structure: xtal.Structure,
+    parent_prim: Optional[casmconfig.Prim] = None,
+    existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+    existing_uuids: Optional[list[str]] = None,
+) -> tuple[
+    list[mapinfo.ScoredStructureMapping],
+    list[str],
+]:
+    """Search for structure mappings between parent and child structures.
+
+    This function implements the core structure mapping search algorithm,
+    finding mappings between superstructures of the parent and child.
+
+    Parameters
+    ----------
+    child : xtal.Structure
+        The child structure.
+    parent_structure : xtal.Structure
+        The parent structure or superstructure (if `parent_prim` is provided and
+        `opt.fix_parent_supercell=True`).
+    parent_prim : Optional[casmconfig.Prim] = None
+        The parent primitive structure, if known, can be provided to specify a
+        particular orientation of the parent structure or enable forcing particular
+        atom mappings on / off with the "fix_parent_supercell" option.
+    opt : StructureMappingSearchOptions
+        Options for the search.
+    existing_results : Optional[list[mapinfo.ScoredStructureMapping]] = None
+        Existing mapping results to merge with new results. Default is [].
+    existing_uuids : Optional[list[str]] = None
+        UUIDs for existing results. Default is [].
+
+    Returns
+    -------
+    search_results : list[mapinfo.ScoredStructureMapping]
+        The sorted list of structure mappings found.
+    uuids : list[str]
+        UUIDs for each mapping.
+
+    Notes
+    -----
+    This mapping search is limited to the case where the parent and child structures:
+
+    - have the same atom types
+    - have the same atom fractions (unless mapping to an alloy with
+      opt.fix_parent_supercell=True)
+
+    The search can be constrained by various options in `opt`:
+
+    - min / max number of atoms
+    - parent / child supercells used
+    - min / max total cost of the mapping
+    - min / max cost of the lattice mapping
+    - lattice mapping reorientation range
+    - k-best mappings to keep
+    - cost methods (isotropic vs symmetry-breaking)
+    - deduplication interpolation factors
+
+    """
+    if parent_prim is None:
+        parent_prim = casmconfig.Prim(
+            xtal.Prim.from_atom_coordinates(structure=parent_structure)
+        )
+    chain_orbits = []
+
+    search_results, uuids, chain_orbits = _mapping_impl(
+        opt=opt,
+        child=child,
+        parent_prim=parent_prim,
+        parent_structure=parent_structure,
+        existing_results=existing_results,
+        existing_uuids=existing_uuids,
+        chain_orbits=chain_orbits,
+    )
+    return (search_results, uuids)
+
+
+def map_to_prim(
+    opt: StructureMappingSearchOptions,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+    existing_uuids: Optional[list[str]] = None,
+) -> tuple[
+    list[mapinfo.ScoredStructureMapping],
+    list[str],
+]:
+    """Search for structure mappings from a child structure to a parent prim.
+
+    This function implements the core structure mapping search algorithm,
+    finding mappings between superstructures of the parent prim and child.
+
+    Parameters
+    ----------
+    opt : StructureMappingSearchOptions
+        Options for the search.
+    child : xtal.Structure
+        The child structure.
+    parent_prim : casmconfig.Prim
+        The parent primitive structure. Used for determining allowed occupants.
+        If the parent structure represents a specific configuration (not an alloy),
+        this should be created from the parent structure. If mapping to an alloy,
+        this should be the actual prim with multiple allowed occupants per site.
+    existing_results : Optional[list[mapinfo.ScoredStructureMapping]] = None
+        Existing mapping results to merge with new results. Default is [].
+    existing_uuids : Optional[list[str]] = None
+        UUIDs for existing results. Default is [].
+
+    Returns
+    -------
+    search_results : list[mapinfo.ScoredStructureMapping]
+        The sorted list of structure mappings found.
+    uuids : list[str]
+        UUIDs for each mapping.
+
+    Notes
+    -----
+    This mapping search is limited to the case where the parent and child structures:
+
+    - have the same atom types
+    - have the same atom fractions (unless mapping to an alloy with
+      opt.fix_parent_supercell=True)
+
+    The search can be constrained by various options in `opt`:
+
+    - min / max number of atoms
+    - parent / child supercells used
+    - min / max total cost of the mapping
+    - min / max cost of the lattice mapping
+    - lattice mapping reorientation range
+    - k-best mappings to keep
+    - cost methods (isotropic vs symmetry-breaking)
+    - deduplication interpolation factors
+
+    """
+    chain_orbits = []
+
+    search_results, uuids, chain_orbits = _mapping_impl(
+        opt=opt,
+        child=child,
+        parent_prim=parent_prim,
+        parent_structure=None,
+        existing_results=existing_results,
+        existing_uuids=existing_uuids,
+        chain_orbits=chain_orbits,
+    )
+    return (search_results, uuids)
 
 
 class StructureMappingSearch:
@@ -2617,7 +2988,7 @@ class StructureMappingSearch:
         parent_prim : Optional[casmconfig.Prim]
             The parent primitive structure. If both `parent` and `parent_prim` are
             provided, the `parent` structure is used to create the fix the supercell
-            being mapped to with the "fix_parent" option.
+            being mapped to with the "fix_parent_supercell" option.
         child : xtal.Structure
             The child structure.
         results_dir : pathlib.Path
@@ -2627,23 +2998,15 @@ class StructureMappingSearch:
             If True, merge the results with existing results in the directory. If False,
             exit with error if the directory already exists.
         """
-        # Determine alloy mode and create parent_prim if needed
-        alloy = False
+        # Create parent_prim if needed
         if parent_prim is None:
             parent_prim = casmconfig.Prim(
                 xtal.Prim.from_atom_coordinates(structure=parent)
             )
-        else:
-            alloy = True
-            if not self.opt.fix_parent:
-                raise NotImplementedError(
-                    "Mapping to a prim is only supported with the --fix-parent option."
-                )
 
         # Initialize results and options history
         search_results = []
         uuids = []
-        chain_orbits = []
         options_history = []
 
         # Handle merging with existing results
@@ -2653,19 +3016,6 @@ class StructureMappingSearch:
                 sys.exit(1)
             else:
                 data = read_required(results_dir / "mappings.json")
-                # Validate same parent and child structures:
-                if alloy is False:
-                    _last_parent = xtal.Structure.from_dict(
-                        data.get("parent_structure")
-                    )
-                    if not parent.is_equivalent_to(_last_parent):
-                        different_parent_error(results_dir=results_dir)
-                    _last_child = xtal.Structure.from_dict(data.get("child"))
-                    if not child.is_equivalent_to(_last_child):
-                        different_child_error(results_dir=results_dir)
-                else:
-                    # TODO validation
-                    pass
 
                 search_results = [
                     mapinfo.ScoredStructureMapping.from_dict(
@@ -2700,14 +3050,13 @@ class StructureMappingSearch:
                         different_lattice_cost_weight_error()
 
         # Perform the structure mapping search
-        search_results, uuids, chain_orbits = map_child_to_parent_structure(
+        search_results, uuids = map_to_structure(
             opt=self.opt,
             parent_structure=parent,
             parent_prim=parent_prim,
             child=child,
             existing_results=search_results,
             existing_uuids=uuids,
-            existing_chain_orbits=chain_orbits,
         )
 
         # Write final results

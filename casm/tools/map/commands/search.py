@@ -12,10 +12,22 @@ def print_desc():
 
 ## Method
 
-The `casm-map search` command is intended for finding mappings 
-between two crystal structures that have the same stoichiometry, 
-and where no sites that allow vacancies or alloying exist in the
-parent structure.
+Search for mappings between `parent` and `child` crystal 
+structures. 
+
+There two primary ways to specify the parent structure:
+
+1. Use the `--parent` option to specify the parent as a  
+   particular structure with a single atom type on each site.
+   When this is used, the child atom types must map to parent
+   atom types exactly (or get infinite assignment cost).
+
+2. Use the `--prim` option to specify the parent as a primitive 
+   unit cell and basis sites with a set of allowed atom types 
+   on each site. When this is used, the child atom types can map
+   to any site in the prim that allows that atom type. This
+   can also be used to perform mappings to structures with
+   vacancies.
 
 The `casm-map search` command reads a parent and child structure 
 file, validates the structures have the same stoichiometry, 
@@ -96,10 +108,11 @@ primitive structures.
 ## Mapping relaxations from known starting structures
 
 When mapping a relaxed structure (child) from a known starting 
-structure (parent), the `--fix-parent` option can be used to 
-skip searching over parent superstructures and lattice 
-reorientations. The deformation gradient is still calculated and
-atom mapping is still performed.
+structure (parent), the `--fix-parent-supercell` option can be 
+used to skip searching over parent superstructures and lattice 
+reorientations. The deformation gradient is still calculated 
+and atom mapping is still performed. In this case, both the 
+`--parent` and `--prim` options should be used together.
 
 
 ## Forcing and suppressing atom mappings
@@ -122,6 +135,20 @@ it may be desirable to suppress this with the
 provided, then `--forced-on` must be specify at least one atom 
 mapping. A trial translation resulting in an displacement of
 zero is generated for each forced mapping.
+
+
+## Note on mapping costs and search order
+
+It is not guaranteed that the search will find all mappings 
+within the specified cost limits. As the cost limits and k-best
+criteria are increased, a more complete search will be done 
+and in some cases additional lower cost mappings may be found. 
+This can occur when the displacement cost is calculated using 
+the symmetry-breaking displacements or when the mean 
+displacement is removed from the atom mappings, both of which 
+are done by default. Neither effect is included in the 
+atom-to-site assignment cost used to order possible atom-to-site 
+assignments.
 
 
 ## Parameters
@@ -164,12 +191,17 @@ Total mapping options:
     If given, do not remove the mean displacement from the 
     structure mappings. By default, the mean displacement is
     removed from the structure mappings.
---fix-parent: bool=False
-    If given, skip searching over parent superstructures and 
-    lattice reorientations. The deformation gradient is still 
-    calculated and atom mapping is still performed. The parent
-    and child are required to have the same number of atoms.
-    
+--fix-parent-supercell: bool=False
+    If given, the only parent superstructure considered is 
+    the one with exactly the lattice of the parent structure
+    and lattices are mapped without reorientation.
+--fix-child-supercell: bool=False
+    If given, the only child superstructure considered is the
+    one with exactly the lattice of the child structure.
+--minimize-rotation: bool=False
+    If given, take an extra step to put lattice mappings into
+    a standard form that minimizes the rotation angle of the
+    deformation gradient.
 
 Lattice mapping options:
 
@@ -327,6 +359,24 @@ def _get_child_format(args):
     return None
 
 
+def print_vacancies_warning():
+    print(
+        """WARNING: Vacancies are allowed in the parent prim but you have
+not provided any parent volume search options so only a single
+parent supercell size will be searched per each child supercell 
+size. The optimal mapping may not be found. Consider using one 
+of:
+
+    1) --parent-atoms-per-unitcell-range MIN MAX
+    2) --parent-volume-range MIN MAX
+    3) --parent-n-vacancy N_VAC \\
+       --parent-n-interstitial N_INT \\
+       --parent-n-atoms-per-unitcell N_ATOMS
+
+"""
+    )
+
+
 def run_search(args):
     """Implements ``casm-map search ...``
 
@@ -346,9 +396,12 @@ def run_search(args):
     import sys
 
     import libcasm.configuration as casmconfig
+    import libcasm.xtal as xtal
     from casm.tools.map import (
+        ParentVolumeSearchOptions,
         StructureMappingSearch,
         StructureMappingSearchOptions,
+        vacancies_allowed,
     )
     from casm.tools.shared.json_io import read_optional, read_required
     from casm.tools.shared.structure_io import read_structure
@@ -357,13 +410,22 @@ def run_search(args):
         print_desc()
         return 0
 
+    child = read_structure(path=args.child, format=_get_child_format(args))
+
+    if args.parent is not None:
+        parent = read_structure(path=args.parent, format=_get_parent_format(args))
+    else:
+        parent = None
+
     if args.prim:
         parent_prim = casmconfig.Prim.from_dict(data=read_required(args.prim))
     else:
-        parent_prim = None
+        if parent is None:
+            print("Error: At least one of --parent or --prim must be provided.")
+            return 1
 
-    parent = read_structure(path=args.parent, format=_get_parent_format(args))
-    child = read_structure(path=args.child, format=_get_child_format(args))
+        xtal_prim = xtal.Prim.from_atom_coordinates(structure=parent)
+        parent_prim = casmconfig.Prim(xtal_prim)
 
     if args.options is not None:
         data = read_required(args.options)
@@ -380,16 +442,46 @@ def run_search(args):
         if args.iso_disp_cost:
             atom_mapping_cost_method = "isotropic_disp_cost"
 
+        parent_vol_options = None
+        if args.parent_atoms_per_unitcell_range is not None:
+            parent_vol_options = ParentVolumeSearchOptions(
+                method="atoms-per-unitcell",
+                atoms_per_unitcell_range=tuple(args.parent_atoms_per_unitcell_range),
+            )
+        elif args.parent_volume_range is not None:
+            parent_vol_options = ParentVolumeSearchOptions(
+                method="parent-volume-range",
+                parent_volume_range=tuple(args.parent_volume_range),
+            )
+        elif (
+            args.parent_n_vacancy is not None or args.parent_n_interstitial is not None
+        ):
+            parent_vol_options = ParentVolumeSearchOptions(
+                method="point-defect-count",
+                expected_n_vacancy=args.parent_n_vacancy,
+                expected_n_interstitial=args.parent_n_interstitial,
+                n_expected_atoms_per_parent_unitcell=args.parent_n_atoms_per_unitcell,
+            )
+        else:
+            # Check if parent_prim allows vacancies:
+            print("Checking for sublattices that allow vacancies...")
+            print()
+
+            if vacancies_allowed(parent_prim):
+                print_vacancies_warning()
+
         opt = StructureMappingSearchOptions(
             max_n_atoms=args.max_n_atoms,
             min_n_atoms=args.min_n_atoms,
+            parent_vol_options=parent_vol_options,
             child_transformation_matrix_to_super_list=None,
             parent_transformation_matrix_to_super_list=None,
             total_min_cost=args.min_total_cost,
             total_max_cost=args.max_total_cost,
             total_k_best=args.k_best,
             no_remove_mean_displacement=args.no_remove_mean_displacement,
-            fix_parent=args.fix_parent,
+            fix_parent_supercell=args.fix_parent_supercell,
+            fix_child_supercell=args.fix_child_supercell,
             lattice_cost_weight=args.lattice_cost_weight,
             cost_tol=args.cost_tol,
             lattice_mapping_min_cost=args.min_lattice_cost,
@@ -571,8 +663,29 @@ def make_search_parser(m):
 
     ### Positional arguments
     positional = search.add_argument_group("Positional arguments")
-    positional.add_argument("parent", type=pathlib.Path, help="Parent structure file")
     positional.add_argument("child", type=pathlib.Path, help="Child structure file")
+
+    ### Parent input options
+    parent_input = search.add_argument_group("Parent input options")
+    parent_input.add_argument(
+        "--parent",
+        type=pathlib.Path,
+        default=None,
+        help=(
+            "Parent structure file. Map the child structure to the parent structure "
+            "or a superstructure. Child atom types must map to parent atom types match "
+            "exactly (or get infinite assignment cost) unless --prim is "
+            "provided to specify the allowed atom types on each site."
+        ),
+    )
+    parent_input.add_argument(
+        "--prim",
+        type=str,
+        help=(
+            "A CASM Prim to specify the primitive unit cell and allowed site "
+            "occupation."
+        ),
+    )
 
     ### Total mapping options
     total = search.add_argument_group("Total mapping options")
@@ -638,25 +751,20 @@ def make_search_parser(m):
             "(default= remove mean displacement )."
         ),
     )
-    # total.add_argument(
-    #     "--parent-superstructure",
-    #     metavar="PARENT_SUPERSTRUCTURE",
-    #     type=pathlib.Path,
-    #     default=None,
-    #     help=(
-    #         "Parent superstructure file. Fixes the parent superstructure using "
-    #         "the lattice of the specified structure file "
-    #         "(default= search over parent superstructures )."
-    #     ),
-    # )
     total.add_argument(
-        "--fix-parent",
+        "--fix-parent-supercell",
         action="store_true",
         default=False,
         help=(
-            "Map to parent structure as provided; skip checking superstructures "
-            "and lattice reorientations."
+            "Map to the --parent structure lattice, without checking superstructures"
+            "and without allowing reorientation."
         ),
+    )
+    total.add_argument(
+        "--fix-child-supercell",
+        action="store_true",
+        default=False,
+        help=("Map child structure as provided, without checking superstructures."),
     )
 
     ### Lattice mapping options
@@ -731,14 +839,6 @@ def make_search_parser(m):
     ### Input options
     input = search.add_argument_group("Input options")
     input.add_argument(
-        "--prim",
-        type=str,
-        help=(
-            "Read a CASM Prim and map child structure onto allowed sites. It is "
-            "required to also set --fix-parent."
-        ),
-    )
-    input.add_argument(
         "--format",
         type=str,
         default=None,
@@ -779,6 +879,59 @@ def make_search_parser(m):
         action="store_true",
         default=False,
         help="Merge new results into existing results.",
+    )
+
+    ### Parent volume search options
+    pvso = search.add_argument_group("Parent volume search options")
+    pvso.add_argument(
+        "--parent-atoms-per-unitcell-range",
+        nargs=2,
+        type=float,
+        default=None,
+        help=(
+            "Determine the parent supercell volume to search from a min and max "
+            "number of atoms per unit cell, specified as two floats (min max)."
+        ),
+    )
+    pvso.add_argument(
+        "--parent-volume-range",
+        nargs=2,
+        type=int,
+        default=None,
+        help=("The parent supercell volume to search, specified as two int (min max)."),
+    )
+
+    # parent_vol = (n_child_atoms - n_interstitial + n_vacancy)
+    #                  / n_expected_atoms_per_unitcell
+    pvso.add_argument(
+        "--parent-n-vacancy",
+        type=int,
+        default=None,
+        help=(
+            "Determine the parent supercell volume to search by specifying how many "
+            "vacancies are expected in the mapped structure. Can be combined with "
+            "--n-parent-interstitial and --n-expected-atoms-per-unitcell."
+        ),
+    )
+    pvso.add_argument(
+        "--parent-n-interstitial",
+        type=int,
+        default=None,
+        help=(
+            "Determine the parent supercell volume to search by specifying how many "
+            "interstitials are expected in the mapped structure. Can be combined with "
+            "--n-parent-vacancy and --n-expected-atoms-per-unitcell."
+        ),
+    )
+    pvso.add_argument(
+        "--parent-n-atoms-per-unitcell",
+        type=int,
+        default=None,
+        help=(
+            "Determine the parent supercell volume to search by specifying how many "
+            "atoms are expected per unit cell in the mapped structure. Can be "
+            "combined with --n-parent-vacancy and --n-parent-interstitial."
+        ),
     )
 
     ### Additional options

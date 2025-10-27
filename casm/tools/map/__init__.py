@@ -2,7 +2,9 @@
 
 from ._StructureMappingSearch import (
     MappingSearchData,
+    ParentVolumeSearchOptions,
     StructureMappingSearch,
     StructureMappingSearchOptions,
-    map_child_to_parent_structure,
+    map_to_structure,
+    vacancies_allowed,
 )
