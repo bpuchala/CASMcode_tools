@@ -2399,7 +2399,7 @@ def _mapping_impl(
             break
 
     # Validate options
-    if not alloy:
+    if parent_structure is not None and not alloy:
         _validate_options_for_parent_structure(
             opt=opt,
             parent_structure=parent_structure,
@@ -2414,7 +2414,7 @@ def _mapping_impl(
         )
 
     ## Parameters
-    if not alloy:
+    if parent_structure is not None and not alloy:
         _max_n_atoms = _get_max_n_atoms_for_parent_structure(
             parent_structure=parent_structure,
             child=child,
@@ -2760,10 +2760,10 @@ def _mapping_impl(
 
 
 def map_to_structure(
-    opt: StructureMappingSearchOptions,
     child: xtal.Structure,
     parent_structure: xtal.Structure,
     parent_prim: Optional[casmconfig.Prim] = None,
+    opt: Optional[StructureMappingSearchOptions] = None,
     existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
     existing_uuids: Optional[list[str]] = None,
 ) -> tuple[
@@ -2786,8 +2786,9 @@ def map_to_structure(
         The parent primitive structure, if known, can be provided to specify a
         particular orientation of the parent structure or enable forcing particular
         atom mappings on / off with the "fix_parent_supercell" option.
-    opt : StructureMappingSearchOptions
-        Options for the search.
+    opt : Optional[StructureMappingSearchOptions] = None
+        Options for the search. Default
+        :class:`StructureMappingSearchOptions` parameters are used if not provided.
     existing_results : Optional[list[mapinfo.ScoredStructureMapping]] = None
         Existing mapping results to merge with new results. Default is [].
     existing_uuids : Optional[list[str]] = None
@@ -2826,6 +2827,9 @@ def map_to_structure(
         )
     chain_orbits = []
 
+    if opt is None:
+        opt = StructureMappingSearchOptions()
+
     search_results, uuids, chain_orbits = _mapping_impl(
         opt=opt,
         child=child,
@@ -2839,9 +2843,9 @@ def map_to_structure(
 
 
 def map_to_prim(
-    opt: StructureMappingSearchOptions,
     child: xtal.Structure,
     parent_prim: casmconfig.Prim,
+    opt: Optional[StructureMappingSearchOptions] = None,
     existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
     existing_uuids: Optional[list[str]] = None,
 ) -> tuple[
@@ -2855,8 +2859,6 @@ def map_to_prim(
 
     Parameters
     ----------
-    opt : StructureMappingSearchOptions
-        Options for the search.
     child : xtal.Structure
         The child structure.
     parent_prim : casmconfig.Prim
@@ -2864,6 +2866,9 @@ def map_to_prim(
         If the parent structure represents a specific configuration (not an alloy),
         this should be created from the parent structure. If mapping to an alloy,
         this should be the actual prim with multiple allowed occupants per site.
+    opt : Optional[StructureMappingSearchOptions] = None
+        Options for the search. Default
+        :class:`StructureMappingSearchOptions` parameters are used if not provided.
     existing_results : Optional[list[mapinfo.ScoredStructureMapping]] = None
         Existing mapping results to merge with new results. Default is [].
     existing_uuids : Optional[list[str]] = None
@@ -2897,6 +2902,9 @@ def map_to_prim(
 
     """
     chain_orbits = []
+
+    if opt is None:
+        opt = StructureMappingSearchOptions()
 
     search_results, uuids, chain_orbits = _mapping_impl(
         opt=opt,

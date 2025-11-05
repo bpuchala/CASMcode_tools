@@ -74,7 +74,7 @@ The `mappings.json` output file contains:
 
     "parent_structure": libcasm.xtal.Structure
         The parent structure.
-    "parent_prim": libcasm.prim.Prim
+    "parent_prim": libcasm.configuration.Prim
         The parent prim.
     "child": libcasm.xtal.Structure
         The child structure.

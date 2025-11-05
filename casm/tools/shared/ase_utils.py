@@ -10,6 +10,8 @@ import numpy as np
 
 import casm.tools.shared.json_io as json_io
 import libcasm.configuration as casmconfig
+import libcasm.mapping.info as mapinfo
+import libcasm.mapping.methods as mapmethods
 import libcasm.xtal as xtal
 
 
@@ -500,3 +502,233 @@ class AseVaspTool:
             raise Exception(f"Unrecognized type {type(value)} from ase.io.read")
 
         return results
+
+
+def relax(
+    casm_structure: xtal.Structure,
+    calculator: typing.Any,
+    fmax: float,
+):
+    """Relax a CASM structure using ASE BFGS optimizer
+
+    Notes
+    -----
+
+    Relaxes the lattice and coordinates using:
+
+    .. code-block:: python
+
+        from ase.filters import UnitCellFilter
+        from ase.optimize import BFGS
+
+        atoms = make_ase_atoms(casm_structure)
+        atoms.calc = calculator
+        optimizer = BFGS(UnitCellFilter(atoms), logfile=None)
+        optimizer.run(fmax=fmax)
+
+
+    Parameters
+    ----------
+    casm_structure : libcasm.xtal.Structure
+        The CASM structure to relax
+    calculator : typing.Any
+        An ASE calculator to use for energy and force calculations
+    fmax : float
+        The maximum force tolerance for the relaxation
+
+    Returns
+    -------
+    relaxed_structure : libcasm.xtal.Structure
+        The relaxed CASM structure
+    potential_energy : float
+        The potential energy of the relaxed structure
+    """
+    from ase.filters import UnitCellFilter
+    from ase.optimize import BFGS
+
+    atoms = make_ase_atoms(casm_structure)
+    atoms.calc = calculator
+    optimizer = BFGS(UnitCellFilter(atoms), logfile=None)
+    optimizer.run(fmax=fmax)
+    potential_energy = atoms.get_potential_energy()
+    relaxed_structure = make_casm_structure(atoms)
+    return (relaxed_structure, potential_energy)
+
+
+def _make_alignment_symop_to_Cartesian_axes(
+    lattice: xtal.Lattice,
+) -> xtal.SymOp:
+    # align structure so 'a' is along 'x', 'b' in 'xy' plane:
+    # L_aligned = Q * L, solve for Q:
+    L = lattice.column_vector_matrix()
+    a = L[:, 0]
+    b = L[:, 1]
+    c = L[:, 2]
+    a_mag = np.linalg.norm(a)
+    a_norm = a / a_mag
+    b_proj = b - np.dot(b, a_norm) * a_norm
+    b_norm = b_proj / np.linalg.norm(b_proj)
+    a_aligned = np.array([a_mag, 0.0, 0.0])
+    b_aligned = np.array([np.dot(b, a_norm), np.linalg.norm(b_proj), 0.0])
+    c_aligned = np.array(
+        [np.dot(c, a_norm), np.dot(c, b_norm), np.dot(c, np.cross(a_norm, b_norm))]
+    )
+    L_aligned = np.column_stack((a_aligned, b_aligned, c_aligned))
+    Q = L_aligned @ np.linalg.inv(L)
+
+    op = xtal.SymOp(matrix=Q, translation=np.zeros(3), time_reversal=False)
+
+    return op
+
+
+def relax_NEB(
+    parent_lattice: xtal.Lattice,
+    child: xtal.Structure,
+    scored_structure_mapping: mapinfo.ScoredStructureMapping,
+    calculator: typing.Any,
+    fmax: float,
+    max_iterations: int = 1000,
+    n_images: int = 7,
+):
+    """Perform a SS-NEB calculation using `tsase.neb.ssneb` with `fire_ssneb` optimizer
+
+    Parameters
+    ----------
+    parent_lattice : libcasm.xtal.Lattice
+        The parent lattice.
+    child : libcasm.xtal.Structure
+        The child structure that was mapped.
+    scored_structure_mapping : libcasm.mapping.info.ScoredStructureMapping
+        The structure mapping from the parent to the child.
+    calculator : typing.Any
+        An ASE calculator to use for energy and force calculations.
+    fmax : float
+        The maximum force tolerance for the relaxation.
+    max_iterations : Optional[int] = 1000
+        The maximum number of iterations for the relaxation. Default is 1000.
+    n_images: Optional[int] = 7
+        The number of images in the NEB chain, including the endpoints.
+
+    Returns
+    -------
+    relaxed_structures : list[libcasm.xtal.Structure]
+        The relaxed CASM structures for each image in the NEB chain. Structures
+        include calculated properties as collected by the `make_casm_structure`
+        function. Structures are aligned to the original parent / mapped child
+        orientation.
+    """
+
+    from casm.tools.map.methods import (
+        make_child_transformation_matrix_to_super,
+    )
+
+    T_child = make_child_transformation_matrix_to_super(
+        parent_lattice=parent_lattice,
+        child_lattice=child.lattice(),
+        structure_mapping=scored_structure_mapping,
+    )
+    T_child = np.round(T_child).astype(int)
+    superchild = xtal.make_superstructure(
+        transformation_matrix_to_super=T_child,
+        structure=child,
+    )
+
+    # Generate endpoints from structure mapping:
+    structures = []
+    for i, f in enumerate([0.0, 1.0]):
+        structure = mapmethods.make_mapped_structure(
+            structure_mapping=scored_structure_mapping.interpolated(f),
+            unmapped_structure=superchild,
+        )
+        structures.append(structure)
+
+    # Align structures to Cartesian axes for SS-NEB:
+    symop_big_alignment = _make_alignment_symop_to_Cartesian_axes(
+        structures[0].lattice()
+    )
+
+    aligned_structures = []
+    for structure in structures:
+        x = symop_big_alignment * structure
+        symop_small_alignment = _make_alignment_symop_to_Cartesian_axes(x.lattice())
+        aligned_structure = symop_small_alignment * x
+        aligned_structures.append(aligned_structure)
+
+    # Create ASE atoms for endpoints:
+    images = []
+    for i, aligned_structure in enumerate(aligned_structures):
+
+        atoms = make_ase_atoms(casm_structure=aligned_structure)
+        atoms.calc = calculator
+        images.append(atoms)
+
+    # Create reference mappings for aligned endpoints:
+    lattice_mapping_ref, atom_mapping_ref = mapmethods.direct_structure_mapping(
+        structure1=aligned_structures[0],
+        structure2=aligned_structures[1],
+    )
+
+    # Perform SS-NEB calculation:
+
+    # Other parameter defaults:
+    # k = 5.0, tangent = "new", dneb = False, dnebOrg = False, method = 'normal',
+    # onlyci = False, weight = 1, parallel = False, ss = True,
+    # express = numpy.zeros((3,3)), fixstrain = numpy.ones((3,3))
+    #
+    # Parameters:
+    #         p1.......... one endpoint of the path
+    #         p2.......... the other endpoint of the path
+    #         numImages... the total number of images in the path, including the
+    #                      endpoints
+    #         k........... the spring force constant
+    #         tangent..... the tangent method to use, "new" for the new tangent,
+    #                      anything else for the old tangent
+    #         dneb........ set to true to use the double-nudging method
+    #         dnebOrg..... set to true to use the original double-nudging method
+    #         method...... "ci" for the climbing image method, anything else for
+    #                      normal NEB method
+    #         onlyci...... (no description)
+    #         weight...... (no description)
+    #         ss.......... boolean, solid-state dimer or regular dimer
+    #         express..... external press, 3*3 lower triangular matrix in the
+    #                      unit of GPa
+    #         fixstrain... 3*3 matrix as express.
+    #                      0 fixes strain at the corresponding direction
+
+    import shutil
+
+    import tsase
+
+    from casm.tools.shared.contexts import captured_output
+
+    # Make a temporary working directory for NEB output:
+    tmp_dir = pathlib.Path("_relax_neb_temp_working_dir")
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Run NEB calculation:
+    with captured_output(wd=tmp_dir) as (sout, serr):
+        ssneb = tsase.neb.ssneb(images[0], images[1], numImages=n_images)
+        opt = tsase.neb.fire_ssneb(ssneb, maxmove=0.1, dtmax=0.1, dt=0.1)
+        converged = opt.minimize(forceConverged=fmax, maxIterations=max_iterations)
+
+    # Align relaxed structures back to original parent / mapped child orientation:
+    ref_parent_structure = structures[0]
+
+    relaxed_structures = []
+    for image in ssneb.path:
+        structure = make_casm_structure(image)
+        # Q * U * L1 * T1 * N = L2; Q.inv == Q.T; L2_mapped = Q.T * L2
+        lmap = mapmethods.map_lattices_without_reorientation(
+            lattice1=ref_parent_structure.lattice(),
+            lattice2=structure.lattice(),
+        )
+        Q = lmap.isometry()
+        op = xtal.SymOp(matrix=Q.T, translation=np.zeros(3), time_reversal=False)
+        relaxed_structures.append(op * structure)
+
+    assert structures[0].is_equivalent_to(relaxed_structures[0])
+    assert structures[1].is_equivalent_to(relaxed_structures[-1])
+
+    return (relaxed_structures, converged)

@@ -5,6 +5,7 @@ from ._StructureMappingSearch import (
     ParentVolumeSearchOptions,
     StructureMappingSearch,
     StructureMappingSearchOptions,
+    map_to_prim,
     map_to_structure,
     vacancies_allowed,
 )
