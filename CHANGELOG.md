@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Set requires-python to ">=3.10,<3.15" to match the wheels being built for CASM C++ extensions and distributed on PyPI.
-- Changed libcasm package dependencies to latest versions, which will avoid potential compatibility issues between older versions of libcasm packages and the planned libcasm-xtal>=3.
+- Changed libcasm package dependencies to latest versions, which will avoid potential compatibility issues between older versions of libcasm packages and the planned libcasm-xtal>=3. 
 
 
 ## [2.0a2] - 2024-08-07
