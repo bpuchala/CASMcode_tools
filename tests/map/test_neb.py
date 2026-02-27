@@ -1,23 +1,43 @@
 import pytest
-from ase.calculators.kim.kim import KIM
 
 import casm.tools.map.neb as casm_neb
 import libcasm.configuration as casmconfig
 import libcasm.xtal as xtal
 import libcasm.xtal.structures as xtal_structures
 from casm.tools.map import map_to_prim
-from casm.tools.shared.ase_utils import relax
+
+
+def get_KIM_calculator_1():
+    try:
+        from ase.calculators.kim.kim import KIM
+
+        calculator = KIM(
+            "MEAM_LAMMPS_DickelBaskesAslam_2018_MgAlZn__MO_093637366498_002"
+        )
+
+    except:
+        print(
+            "Failed to construct KIM calculator. "
+            "ASE and OpenKIM are required to run this test."
+        )
+        print("Options:")
+        print("1. Install ASE and OpenKIM")
+        print('2. Skip this test using the pytest option `-m "not requires_ase"`')
+        raise
+
+    return calculator
 
 
 @pytest.fixture
 def bcc_to_hcp_mapping():
+    from casm.tools.shared.ase_utils import relax
 
     # Requires:
     # - ASE with KIM installed and configured
     # - KIM model: MEAM_LAMMPS_DickelBaskesAslam_2018_MgAlZn__MO_093637366498_002
 
     # Prepare calculator:
-    calculator = KIM("MEAM_LAMMPS_DickelBaskesAslam_2018_MgAlZn__MO_093637366498_002")
+    calculator = get_KIM_calculator_1()
     fmax = 0.01
 
     # Prepare unrelaxed parent and child structures:
@@ -61,6 +81,7 @@ def bcc_to_hcp_mapping():
     return parent_prim, child, structure_mapping, calculator
 
 
+@pytest.mark.requires_ase
 def test_NEBPath(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -100,6 +121,7 @@ def test_NEBPath(bcc_to_hcp_mapping):
         assert pytest.approx(coord[3], abs=1e-6) == expected_perpendicular_coord
 
 
+@pytest.mark.requires_ase
 def test_NEBPath_calculate(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -125,6 +147,7 @@ def test_NEBPath_calculate(bcc_to_hcp_mapping):
         # print()
 
 
+@pytest.mark.requires_ase
 def test_NEBImage_rmul(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -162,6 +185,7 @@ def test_NEBImage_rmul(bcc_to_hcp_mapping):
     assert len(orbit) == 48
 
 
+@pytest.mark.requires_ase
 def test_NEBPath_make_chain_orbit(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 

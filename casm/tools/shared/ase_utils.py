@@ -3,9 +3,6 @@
 import pathlib
 import typing
 
-import ase
-import ase.calculators.vasp
-import ase.io
 import numpy as np
 
 import casm.tools.shared.json_io as json_io
@@ -14,6 +11,17 @@ import libcasm.configuration as casmconfig
 import libcasm.mapping.info as mapinfo
 import libcasm.mapping.methods as mapmethods
 import libcasm.xtal as xtal
+
+try:
+    import ase
+    import ase.calculators.vasp
+    import ase.io
+except ImportError as e:
+    print(
+        "To use casm.tools.shared.ase_utils, install ASE: \n\n"
+        "    pip install ase\n\n"
+    )
+    raise e
 
 
 def make_ase_atoms(casm_structure: xtal.Structure) -> ase.Atoms:
