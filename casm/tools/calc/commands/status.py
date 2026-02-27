@@ -18,12 +18,10 @@ if typing.TYPE_CHECKING:
 
 def _validate_casm_project():
     if importlib.util.find_spec("casm.project") is None:
-        print(
-            """
+        print("""
 casm.project is not installed. To use `casm-calc status` install casm-project with:
 
-    pip install casm-project"""
-        )
+    pip install casm-project""")
         sys.exit(1)
 
 

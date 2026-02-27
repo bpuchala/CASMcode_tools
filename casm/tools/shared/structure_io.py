@@ -56,14 +56,12 @@ def read_structure(
         try:
             import ase
         except ImportError:
-            print(
-                f"""Cannot read {path}
+            print(f"""Cannot read {path}
 
 CASM does not support the file format and ASE is not installed.
 Install ASE for additional conversions with:
 
-    pip install ase"""
-            )
+    pip install ase""")
             sys.exit(1)
 
         from casm.tools.shared.ase_utils import read_structure_using_ase
@@ -71,11 +69,9 @@ Install ASE for additional conversions with:
         try:
             return read_structure_using_ase(path=path, format=format)
         except ase.io.formats.UnknownFileTypeError:
-            print(
-                f"""Cannot read {path}
+            print(f"""Cannot read {path}
                 
-Neither CASM nor ASE recognize the file format."""
-            )
+Neither CASM nor ASE recognize the file format.""")
             sys.exit(1)
 
     if format is None:
@@ -145,14 +141,12 @@ def read_structure_traj(
         try:
             import ase
         except ImportError:
-            print(
-                f"""Cannot read {path}
+            print(f"""Cannot read {path}
 
 CASM does not support the file format and ASE is not installed.
 Install ASE for additional conversions with:
 
-    pip install ase"""
-            )
+    pip install ase""")
             sys.exit(1)
 
         from casm.tools.shared.ase_utils import read_structure_traj_using_ase
@@ -160,11 +154,9 @@ Install ASE for additional conversions with:
         try:
             return read_structure_traj_using_ase(path=path, format=format)
         except ase.io.formats.UnknownFileTypeError:
-            print(
-                f"""Cannot read {path}
+            print(f"""Cannot read {path}
 
-Neither CASM nor ASE recognize the file format."""
-            )
+Neither CASM nor ASE recognize the file format.""")
             sys.exit(1)
 
     if format is None:
@@ -238,14 +230,12 @@ def write_structure(
         try:
             import ase
         except ImportError:
-            print(
-                f"""Cannot write {path}
+            print(f"""Cannot write {path}
 
 CASM does not support the file format and ASE is not installed. 
 Install ASE for additional conversions with:
 
-    pip install ase"""
-            )
+    pip install ase""")
             sys.exit(1)
 
         from casm.tools.shared.ase_utils import write_structure_using_ase
@@ -258,11 +248,9 @@ Install ASE for additional conversions with:
                 format=format,
             )
         except ase.io.formats.UnknownFileTypeError:
-            print(
-                f"""Cannot write {path}
+            print(f"""Cannot write {path}
 
-Neither CASM nor ASE support the file format."""
-            )
+Neither CASM nor ASE support the file format.""")
             sys.exit(1)
 
     if format is None:
@@ -332,14 +320,12 @@ def write_structure_traj(
         try:
             import ase
         except ImportError:
-            print(
-                f"""Cannot write {path}
+            print(f"""Cannot write {path}
 
 CASM does not support the file format and ASE is not installed. 
 Install ASE for additional conversions with:
 
-    pip install ase"""
-            )
+    pip install ase""")
             sys.exit(1)
 
         from casm.tools.shared.ase_utils import write_structure_traj_using_ase
@@ -352,11 +338,9 @@ Install ASE for additional conversions with:
                 format=format,
             )
         except ase.io.formats.UnknownFileTypeError:
-            print(
-                f"""Cannot write {path}
+            print(f"""Cannot write {path}
 
-Neither CASM nor ASE support the file format."""
-            )
+Neither CASM nor ASE support the file format.""")
             sys.exit(1)
 
     if format is None:

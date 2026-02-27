@@ -270,6 +270,92 @@ def make_primitive_chain(
     return primitive_chain
 
 
+def make_chain(
+    parent_lattice: xtal.Lattice,
+    child: xtal.Structure,
+    structure_mapping: mapinfo.StructureMapping,
+    f_chain: list[float],
+) -> list[xtal.Structure]:
+    """Make a chain of structures interpolating between the parent and child.
+
+    Parameters
+    ----------
+    parent_lattice : xtal.Lattice
+        The parent lattice.
+
+    child : xtal.Structure
+        The child structure.
+
+    structure_mapping : libcasm.mapping.info.StructureMapping
+        The structure mapping between the parent and child structures.
+
+    f_chain : list[float]
+        The interpolation factors for the structures in the chain, where a value of 0.0
+        corresponds to the ideal parent structure and a value of 1.0 corresponds
+        to the mapped child structure.
+
+    Returns
+    -------
+    chain : list[xtal.Structure]
+        A list of structures interpolating between the parent and child.
+
+    """
+    unmapped_structure = make_child_superstructure(
+        parent_lattice=parent_lattice,
+        child=child,
+        structure_mapping=structure_mapping,
+    )
+
+    def _make_interpolated_structure(f):
+        """Make an interpolated prototype structure."""
+        s = mapmethods.make_mapped_structure(
+            structure_mapping=structure_mapping.interpolated(f),
+            unmapped_structure=unmapped_structure,
+        )
+        return xtal.make_structure_within(s)
+
+    chain = []
+    for f in f_chain:
+        chain.append(_make_interpolated_structure(f))
+    return chain
+
+
+def make_chain_orbit_and_generators(
+    chain_prototype: list[xtal.Structure],
+    parent_prim: casmconfig.Prim,
+) -> tuple[list[list[xtal.Structure]], list[xtal.SymOp]]:
+    """Make an orbit of chains of structures from a prototype chain.
+
+    Parameters
+    ----------
+    chain_prototype : list[libcasm.xtal.Structure]
+        A prototype chain of structures.
+    parent_prim : casmconfig.Prim
+        Parent structure, as a Prim. The factor group of this Prim will be used
+        to generate the orbit of equivalent chains.
+
+    Returns
+    -------
+    chain_orbit : list[list[libcasm.xtal.Structure]]
+        A list of chains, where each element is a distinct chain that is equivalent by a
+        symmetry operation in the factor group of the parent Prim.
+    chain_orbit_generators : list[libcasm.xtal.SymOp]
+        A list of symmetry operations from the factor group of the parent Prim that
+        generate each chain in the chain_orbit from the chain prototype.
+    """
+    chain_orbit = []
+    chain_orbit_generators = []
+    for op in parent_prim.factor_group.elements:
+        chain = []
+        for structure in chain_prototype:
+            chain.append(xtal.make_canonical_structure(op * structure))
+        if not chain_is_in_orbit(chain, chain_orbit):
+            chain_orbit.append(chain)
+            chain_orbit_generators.append(op)
+
+    return (chain_orbit, chain_orbit_generators)
+
+
 def make_chain_orbit(
     chain_prototype: list[xtal.Structure],
     parent_prim: casmconfig.Prim,
@@ -290,15 +376,55 @@ def make_chain_orbit(
         A list of chains, where each element is a distinct chain that is equivalent by a
         symmetry operation in the factor group of the parent Prim.
     """
-    chain_orbit = []
-    for op in parent_prim.factor_group.elements:
-        chain = []
-        for structure in chain_prototype:
-            chain.append(xtal.make_canonical_structure(op * structure))
-        if not chain_is_in_orbit(chain, chain_orbit):
-            chain_orbit.append(chain)
+    return make_chain_orbit_and_generators(
+        chain_prototype=chain_prototype,
+        parent_prim=parent_prim,
+    )[0]
 
-    return chain_orbit
+
+def make_primitive_chain_orbit_and_generators(
+    parent_prim: casmconfig.Prim,
+    child: xtal.Structure,
+    structure_mapping: mapinfo.StructureMapping,
+    f_chain: list[float],
+) -> tuple[list[list[xtal.Structure]], list[xtal.SymOp]]:
+    """Make an orbit of chains of primitive structures mapping between the parent and
+    child.
+
+    Parameters
+    ----------
+    parent_prim : casmconfig.Prim
+        Parent structure, as a Prim. The factor group of this Prim will be used
+        to generate the orbit of equivalent chains.
+    child : xtal.Structure
+        The child structure.
+    structure_mapping : libcasm.mapping.info.StructureMapping
+        The structure mapping between the parent and child structures.
+    f_chain : list[float]
+        The interpolation factors for the structures in the chain, where a value of 0.0
+        corresponds to the ideal parent structure and a value of 1.0 corresponds
+        to the mapped child structure.
+
+    Returns
+    -------
+    primitive_chain_orbit : list[list[xtal.Structure]]
+        A list of chains, where each element is a distinct chain that is equivalent by a
+        symmetry operation in the factor group of the parent Prim. The structures in
+        each chain are made primitive.
+    chain_orbit_generators : list[libcasm.xtal.SymOp]
+        A list of symmetry operations from the factor group of the parent Prim that
+        generate each chain in the chain_orbit from the chain prototype.
+
+    """
+    return make_chain_orbit_and_generators(
+        chain_prototype=make_primitive_chain(
+            parent_lattice=parent_prim.xtal_prim.lattice(),
+            child=child,
+            structure_mapping=structure_mapping,
+            f_chain=f_chain,
+        ),
+        parent_prim=parent_prim,
+    )
 
 
 def make_primitive_chain_orbit(
@@ -332,15 +458,12 @@ def make_primitive_chain_orbit(
         each chain are made primitive.
 
     """
-    return make_chain_orbit(
-        chain_prototype=make_primitive_chain(
-            parent_lattice=parent_prim.xtal_prim.lattice(),
-            child=child,
-            structure_mapping=structure_mapping,
-            f_chain=f_chain,
-        ),
+    return make_primitive_chain_orbit_and_generators(
         parent_prim=parent_prim,
-    )
+        child=child,
+        structure_mapping=structure_mapping,
+        f_chain=f_chain,
+    )[0]
 
 
 def parent_supercell_factor_group_size(

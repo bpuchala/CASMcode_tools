@@ -15,21 +15,17 @@ def _get_format(args):
 
 def _validate_ase():
     if importlib.util.find_spec("ase") is None:
-        print(
-            """ASE is not installed. To use `casm-calc vasp` install ASE with:
+        print("""ASE is not installed. To use `casm-calc vasp` install ASE with:
 
-    pip install ase"""
-        )
+    pip install ase""")
         sys.exit(1)
 
 
 def _validate_vasp_pp_path():
     if "VASP_PP_PATH" not in os.environ:
-        print(
-            """Please set the environment variable VASP_PP_PATH to the directory
+        print("""Please set the environment variable VASP_PP_PATH to the directory
 containing the VASP POTCAR files. It should contain the directories
-potpaw_PBE, potpaw, and potpaw_GGA, as necessary."""
-        )
+potpaw_PBE, potpaw, and potpaw_GGA, as necessary.""")
         sys.exit(1)
 
 

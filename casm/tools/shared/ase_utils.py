@@ -9,6 +9,7 @@ import ase.io
 import numpy as np
 
 import casm.tools.shared.json_io as json_io
+import casm.tools.shared.opt_utils as opt_utils
 import libcasm.configuration as casmconfig
 import libcasm.mapping.info as mapinfo
 import libcasm.mapping.methods as mapmethods
@@ -508,6 +509,7 @@ def relax(
     casm_structure: xtal.Structure,
     calculator: typing.Any,
     fmax: float,
+    logfile: typing.Any = None,
 ):
     """Relax a CASM structure using ASE BFGS optimizer
 
@@ -523,7 +525,7 @@ def relax(
 
         atoms = make_ase_atoms(casm_structure)
         atoms.calc = calculator
-        optimizer = BFGS(UnitCellFilter(atoms), logfile=None)
+        optimizer = BFGS(UnitCellFilter(atoms), logfile=logfile)
         optimizer.run(fmax=fmax)
 
 
@@ -535,6 +537,10 @@ def relax(
         An ASE calculator to use for energy and force calculations
     fmax : float
         The maximum force tolerance for the relaxation
+    logfile: typing.Any = None
+        The ASE BFGS optimizer `logfile` parameter. If logfile is a string, a file with
+        that name will be opened. Use ‘-’ for stdout. It may be a file object, Path,
+        str, or None. Default is None.
 
     Returns
     -------
@@ -544,11 +550,12 @@ def relax(
         The potential energy of the relaxed structure
     """
     from ase.filters import UnitCellFilter
-    from ase.optimize import BFGS
+    from ase.optimize import BFGSLineSearch
 
     atoms = make_ase_atoms(casm_structure)
     atoms.calc = calculator
-    optimizer = BFGS(UnitCellFilter(atoms), logfile=None)
+    # optimizer = BFGS(UnitCellFilter(atoms), logfile=logfile)
+    optimizer = BFGSLineSearch(UnitCellFilter(atoms), logfile=logfile)
     optimizer.run(fmax=fmax)
     potential_energy = atoms.get_potential_energy()
     relaxed_structure = make_casm_structure(atoms)
@@ -732,3 +739,326 @@ def relax_NEB(
     assert structures[1].is_equivalent_to(relaxed_structures[-1])
 
     return (relaxed_structures, converged)
+
+
+class StrainDispVarAseCalcTool:
+    """Tool for constructing energy and gradient functions in terms of strain
+    and displacement variables for use in optimization routines.
+
+    Notes
+    -----
+    - Uses an ASE calculator for energy, force, and stress evaluations.
+    - Caches results in memory to make it easier to track the number of unique
+      evaluations.
+    - Intended for use with fast calculators, but could be adapted for slower ones by
+      storing results on disk instead of in memory.
+
+    """
+
+    def __init__(
+        self,
+        var_tool: opt_utils.StrainDispVarTool,
+        calculator: typing.Any,
+    ):
+        """
+
+        .. rubric:: Constructor
+
+        Parameters
+        ----------
+        var_tool: opt_utils.StrainDispVarTool
+            Tool to convert between CASM structures and strain and displacement
+            variable arrays.
+
+        calculator: typing.Any
+            ASE calculator to use for energy, force, and stress evaluations.
+        """
+
+        self.var_tool = var_tool
+        """opt_utils.StrainDispVarTool: Tool to convert between CASM structures and 
+        variable arrays."""
+
+        self.calculator = calculator
+        """typing.Any: ASE calculator to use for energy, force, and stress 
+        evaluations."""
+
+        self.x_list = []
+        """List[np.ndarray]: List of x arrays corresponding to each calculation."""
+
+        self.potential_energy_list = []
+        """List[float]: List of potential energies corresponding to each x in x_list."""
+
+        self.force_list = []
+        """List[np.ndarray]: List of forces corresponding to each x in x_list,
+        stored as (3, N_atoms) arrays."""
+
+        self.stress_list = []
+        """List[np.ndarray]: List of stresses corresponding to each x in x_list,
+        stored as (6,) arrays in Kelvin notation."""
+
+    def get_index(self, x: np.ndarray) -> int:
+        """Return the index of x in the history, or None if not found.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+
+        Returns
+        -------
+        index : Optional[int]
+            The index of x in the history, or None if not found. Exact matches only.
+        """
+        from casm.tools.shared.conversions import voigt_to_kelvin
+
+        for i, x_hist in enumerate(self.x_list):
+            if (x == x_hist).all():
+                return i
+
+        # If not found, calculate and store:
+        i = len(self.x_list)
+
+        structure = self.var_tool.make_structure(x)
+        atoms = make_ase_atoms(structure)
+        atoms.calc = self.calculator
+
+        energy = atoms.get_potential_energy()
+        forces = atoms.get_forces()
+        force = forces.transpose()
+        stress = voigt_to_kelvin(atoms.get_stress(voigt=True))
+
+        self.x_list.append(x)
+        self.potential_energy_list.append(energy)
+        self.force_list.append(force)
+        self.stress_list.append(stress)
+
+        return i
+
+    def get_potential_energy(
+        self,
+        x: np.ndarray,
+    ) -> float:
+        """Return potential energy for given x
+
+        Notes
+        -----
+
+        - Checks if x is already in history.
+        - If it is, returns stored potential energy.
+        - If not, calculates the potential energy, forces, and stress, and stores them,
+          then returns the potential energy.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+
+        Returns
+        -------
+        potential_energy : float
+            The potential energy corresponding to x.
+        """
+        i = self.get_index(x)
+        potential_energy = self.potential_energy_list[i]
+        # print(f"**Eval {i}: Energy = {potential_energy:.6f} eV**")
+        return potential_energy
+
+    def get_grad(
+        self,
+        x: np.ndarray,
+        dx: typing.Union[float, np.ndarray],
+    ):
+        """Calculate the potential energy gradient using finite differences
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+        dx : Union[float, np.ndarray]
+            The finite difference step size. If a float is provided, the same step size
+            is used for all variables. If an array is provided, it must have the same
+            shape as x.
+
+        Returns
+        -------
+        grad : np.ndarray
+            The gradient of the potential energy with respect to x, as a 1D array,
+            calculated using central finite differences.
+        """
+        n_vars = x.shape[0]
+        grad = np.zeros(n_vars)
+
+        for i in range(n_vars):
+            x_plus = x.copy()
+            x_minus = x.copy()
+
+            if isinstance(dx, float):
+                delta = dx
+            else:
+                delta = dx[i]
+
+            x_plus[i] += delta
+            x_minus[i] -= delta
+
+            f_plus = self.get_potential_energy(x_plus)
+            f_minus = self.get_potential_energy(x_minus)
+
+            grad[i] = (f_plus - f_minus) / (2 * delta)
+
+        return grad
+
+    def get_hess(
+        self,
+        x: np.ndarray,
+        dx: typing.Union[float, np.ndarray],
+    ):
+        """Calculate the Hessian using finite differences
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+        dx : Union[float, np.ndarray]
+            The finite difference step size. If a float is provided, the same step size
+            is used for all variables. If an array is provided, it must have the same
+            shape as x.
+
+        Returns
+        -------
+        hess : np.ndarray
+            The Hessian of the potential energy with respect to x, as a 2D array,
+            calculated using central finite differences.
+        """
+        n_vars = x.shape[0]
+        hess = np.zeros((n_vars, n_vars))
+
+        for i in range(n_vars):
+            for j in range(n_vars):
+
+                if i == j:
+                    x_plus = x.copy()
+                    x_minus = x.copy()
+
+                    if isinstance(dx, float):
+                        delta = dx
+                    else:
+                        delta = dx[i]
+
+                    x_plus[i] += delta
+                    x_minus[i] -= delta
+
+                    f_plus = self.get_potential_energy(x_plus)
+                    f_minus = self.get_potential_energy(x_minus)
+                    f_curr = self.get_potential_energy(x)
+
+                    hess[i, i] = (f_plus - 2 * f_curr + f_minus) / (delta**2)
+                    continue
+
+                elif j < i:
+
+                    x_pp = x.copy()
+                    x_pm = x.copy()
+                    x_mp = x.copy()
+                    x_mm = x.copy()
+
+                    if isinstance(dx, float):
+                        delta_i = dx
+                        delta_j = dx
+                    else:
+                        delta_i = dx[i]
+                        delta_j = dx[j]
+
+                    x_pp[i] += delta_i
+                    x_pp[j] += delta_j
+
+                    x_pm[i] += delta_i
+                    x_pm[j] -= delta_j
+
+                    x_mp[i] -= delta_i
+                    x_mp[j] += delta_j
+
+                    x_mm[i] -= delta_i
+                    x_mm[j] -= delta_j
+
+                    f_pp = self.get_potential_energy(x_pp)
+                    f_pm = self.get_potential_energy(x_pm)
+                    f_mp = self.get_potential_energy(x_mp)
+                    f_mm = self.get_potential_energy(x_mm)
+
+                    hess[i, j] = (f_pp - f_pm - f_mp + f_mm) / (4 * delta_i * delta_j)
+                    hess[j, i] = hess[i, j]
+                    continue
+
+        return hess
+
+    def get_force(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        """Return forces on atoms for given x
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+
+        Returns
+        -------
+        force : np.ndarray
+            The force, as a (3, N) matrix, corresponding to x.
+        """
+        return self.force_list[self.get_index(x)]
+
+    def get_stress(
+        self,
+        x: np.ndarray,
+    ) -> np.ndarray:
+        """Return stress for given x
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D array of variables.
+
+        Returns
+        -------
+        stress : np.ndarray
+            The stress, as a (6,) array in Kelvin notation, corresponding to x.
+        """
+        return self.stress_list[self.get_index(x)]
+
+    def make_potential_energy_f(self):
+        """Return a function that computes potential energy for given x
+
+        Returns
+        -------
+        potential_energy_f : Callable[[np.ndarray], float]
+            Function that takes a 1D array x and returns the potential energy.
+
+        """
+
+        def potential_energy_f(x: np.ndarray) -> float:
+            return self.get_potential_energy(x)
+
+        return potential_energy_f
+
+    def make_grad_f(self):
+        """Return a function that computes the gradient for given x
+
+        Returns
+        -------
+        grad_f : Callable[[np.ndarray], np.ndarray]
+            Function that takes a 1D array x and returns the gradient of the potential
+            energy with respect to x as a 1D array.
+        """
+
+        def grad_f(x: np.ndarray) -> np.ndarray:
+            force = self.get_force(x)
+            stress = self.get_stress(x)
+            return self.var_tool.make_grad(
+                x=x,
+                force=force,
+                stress=stress,
+            )
+
+        return grad_f

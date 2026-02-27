@@ -360,8 +360,7 @@ def _get_child_format(args):
 
 
 def print_vacancies_warning():
-    print(
-        """WARNING: Vacancies are allowed in the parent prim but you have
+    print("""WARNING: Vacancies are allowed in the parent prim but you have
 not provided any parent volume search options so only a single
 parent supercell size will be searched per each child supercell 
 size. The optimal mapping may not be found. Consider using one 
@@ -373,8 +372,7 @@ of:
        --parent-n-interstitial N_INT \\
        --parent-n-atoms-per-unitcell N_ATOMS
 
-"""
-    )
+""")
 
 
 def run_search(args):
@@ -531,13 +529,11 @@ def run_search(args):
         opt.min_n_atoms = next_max_n_atoms
         merge = True
 
-        print(
-            f"""
+        print(f"""
 --next:
     Expanding search to next greatest common multiple number
     of atoms ({next_max_n_atoms} atoms) and merging results.
-"""
-        )
+""")
         sys.stdout.flush()
 
     f = StructureMappingSearch(opt=opt)
