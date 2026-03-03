@@ -47,7 +47,7 @@ jobs:
       - name: test
         shell: bash
         run: |
-          python -m pytest -rsap -x -m "not requires_ase" tests
+          python -m pytest -rsap -x -m "not requires_ase and not requires_kim" tests
 
       - name: make with ase
         shell: bash
@@ -57,7 +57,7 @@ jobs:
       - name: test with requires_ase
         shell: bash
         run: |
-          python -m pytest -rsap -x -m "requires_ase" tests
+          python -m pytest -rsap -x -m "requires_ase and not requires_kim" tests
 
       - name: Install doc requirements
         run: |

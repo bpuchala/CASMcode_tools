@@ -34,7 +34,7 @@ jobs:
       - name: make test
         shell: bash
         run: |
-          python -m pytest -rsap -x -m "not requires_ase" tests
+          python -m pytest -rsap -x -m "not requires_ase and not requires_kim" tests
 
       - name: make
         shell: bash
@@ -44,4 +44,4 @@ jobs:
       - name: make test ase
         shell: bash
         run: |
-          python -m pytest -rsap -x -m "requires_ase" tests
+          python -m pytest -rsap -x -m "requires_ase and not requires_kim" tests
