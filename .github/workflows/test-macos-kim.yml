@@ -1,0 +1,63 @@
+name: Testing on macos-latest with KIM
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 12 * * 0'
+
+jobs:
+  build:
+    runs-on: macOS-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up micromamba and KIM API environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: kim-env
+          create-args: -c conda-forge python=3.13 kim-api kimpy lammps
+          init-shell: bash
+
+      - name: Install KIM potential
+        shell: bash -el {0}
+        run: |
+          kim-api-collections-management install user MEAM_LAMMPS_DickelBaskesAslam_2018_MgAlZn__MO_093637366498_002
+
+      - name: Install build requirements
+        shell: bash -el {0}
+        run: |
+          brew update
+          brew install cmake
+          pip install --upgrade -r build_requirements.txt
+
+      - name: make
+        shell: bash -el {0}
+        run: |
+          pip install .
+
+      - name: Install test requirements & set configuration variables
+        shell: bash -el {0}
+        run: |
+          pip install -r test_requirements.txt
+
+      - name: test
+        shell: bash -el {0}
+        run: |
+          python -m pytest -rsap -x -m "not requires_ase and not requires_kim" tests
+
+      - name: make with ase
+        shell: bash -el {0}
+        run: |
+          pip install ".[ase]"
+
+      - name: test with requires_ase
+        shell: bash -el {0}
+        run: |
+          python -m pytest -rsap -x -m "requires_ase and not requires_kim" tests
+
+      - name: test with requires_kim
+        shell: bash -el {0}
+        run: |
+          python -m pytest -rsap -x -m "requires_kim" tests
