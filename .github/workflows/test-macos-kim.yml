@@ -17,7 +17,7 @@ jobs:
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: kim-env
-          create-args: -c conda-forge python=3.13 kim-api kimpy lammps
+          create-args: -c conda-forge python=3.13 cmake kim-api kimpy lammps
           init-shell: bash
 
       - name: Install KIM potential
@@ -28,8 +28,6 @@ jobs:
       - name: Install build requirements
         shell: bash -el {0}
         run: |
-          brew update
-          brew list cmake || brew install cmake
           pip install --upgrade -r build_requirements.txt
 
       - name: make
