@@ -26,7 +26,7 @@ jobs:
       - name: Install KIM potential
         shell: bash -el {0} # Run in the kim-env environment
         run: |
-          kim-api-collections-management install user MEAM_LAMMPS_KimJeonLee_2015_MgCa__MO_611309973581_002
+          kim-api-collections-management install user MEAM_LAMMPS_DickelBaskesAslam_2018_MgAlZn__MO_093637366498_002
 
       - name: Install build requirements
         shell: bash -el {0}
