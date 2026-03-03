@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ase = ["ase"]
+kim = ["kimpy"]
 
 [project.urls]
 Homepage = "https://prisms-center.github.io/CASMcode_docs/"
@@ -56,6 +57,7 @@ known-first-party = ["libcasm", "casm"]
 [tool.pytest.ini_options]
 markers = [
     "requires_ase: marks tests requiring ase (deselect with '-m \"not requires_ase\"')",
+    "requires_kim: marks tests requiring ase and OpenKIM (deselect with '-m \"not requires_kim\"')",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "very_slow: marks tests as very slow (deselect with '-m \"not very_slow\"')",
 ]

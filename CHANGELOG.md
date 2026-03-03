@@ -5,6 +5,15 @@ All notable changes to `casm-tools` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Update libcasm-xtal dependency to `>=3.0a1`
+- Update libcasm-mapping dependency to `>=3.0a1`
+- Update libcasm-configuration dependency to `>=3.0a1`
+
+
 ## [2.0a3] - 2026-02-26
 
 ### Changed

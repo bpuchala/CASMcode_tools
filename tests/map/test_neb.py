@@ -22,7 +22,7 @@ def get_KIM_calculator_1():
         )
         print("Options:")
         print("1. Install ASE and OpenKIM")
-        print('2. Skip this test using the pytest option `-m "not requires_ase"`')
+        print('2. Skip this test using the pytest option `-m "not requires_kim"`')
         raise
 
     return calculator
@@ -81,7 +81,7 @@ def bcc_to_hcp_mapping():
     return parent_prim, child, structure_mapping, calculator
 
 
-@pytest.mark.requires_ase
+@pytest.mark.requires_kim
 def test_NEBPath(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -121,7 +121,7 @@ def test_NEBPath(bcc_to_hcp_mapping):
         assert pytest.approx(coord[3], abs=1e-6) == expected_perpendicular_coord
 
 
-@pytest.mark.requires_ase
+@pytest.mark.requires_kim
 def test_NEBPath_calculate(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -147,7 +147,7 @@ def test_NEBPath_calculate(bcc_to_hcp_mapping):
         # print()
 
 
-@pytest.mark.requires_ase
+@pytest.mark.requires_kim
 def test_NEBImage_rmul(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
@@ -185,7 +185,7 @@ def test_NEBImage_rmul(bcc_to_hcp_mapping):
     assert len(orbit) == 48
 
 
-@pytest.mark.requires_ase
+@pytest.mark.requires_kim
 def test_NEBPath_make_chain_orbit(bcc_to_hcp_mapping):
     parent_prim, child, structure_mapping, calculator = bcc_to_hcp_mapping
 
