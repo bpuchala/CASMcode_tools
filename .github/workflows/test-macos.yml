@@ -18,8 +18,6 @@ jobs:
 
       - name: Install build requirements
         run: |
-          brew update
-          brew list cmake || brew install cmake
           pip install --upgrade -r build_requirements.txt
 
       - name: make
