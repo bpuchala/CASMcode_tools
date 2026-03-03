@@ -29,7 +29,7 @@ jobs:
         shell: bash -el {0}
         run: |
           brew update
-          brew install cmake
+          brew list cmake || brew install cmake
           pip install --upgrade -r build_requirements.txt
 
       - name: make
