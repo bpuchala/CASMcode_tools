@@ -20,50 +20,47 @@ jobs:
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: kim-env
-          create-args: -c conda-forge kim-api kimpy lammps
+          create-args: -c conda-forge python=3.13 kim-api kimpy lammps
           init-shell: bash
 
-      - name: Install KIM potential and configure environment
-        shell: bash -el {0}
+      - name: Install KIM potential
+        shell: bash -el {0} # Run in the kim-env environment
         run: |
           kim-api-collections-management install user MEAM_LAMMPS_KimJeonLee_2015_MgCa__MO_611309973581_002
-          echo "LD_LIBRARY_PATH=$CONDA_PREFIX/lib:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
 
       - name: Install build requirements
+        shell: bash -el {0}
         run: |
           sudo apt-get update
           sudo apt-get install build-essential cmake
           pip install --upgrade -r build_requirements.txt
 
       - name: make
-        shell: bash
+        shell: bash -el {0}
         run: |
           pip install .
 
       - name: Install test requirements & set configuration variables
+        shell: bash -el {0}
         run: |
           pip install -r test_requirements.txt
 
       - name: test
-        shell: bash
+        shell: bash -el {0}
         run: |
           python -m pytest -rsap -x -m "not requires_ase and not requires_kim" tests
 
       - name: make with ase
-        shell: bash
+        shell: bash -el {0}
         run: |
           pip install ".[ase]"
 
       - name: test with requires_ase
-        shell: bash
+        shell: bash -el {0}
         run: |
           python -m pytest -rsap -x -m "requires_ase and not requires_kim" tests
 
       - name: test with requires_kim
-        shell: bash
+        shell: bash -el {0}
         run: |
           python -m pytest -rsap -x -m "requires_kim" tests
