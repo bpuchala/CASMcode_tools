@@ -10,7 +10,7 @@ import libcasm.xtal as xtal
 
 
 def read_structure(
-    path: pathlib.Path,
+    path: typing.Union[pathlib.Path, str],
     format: typing.Optional[str] = None,
 ) -> xtal.Structure:
     """Read a structure from a file.
@@ -30,7 +30,7 @@ def read_structure(
 
     Parameters
     ----------
-    path : pathlib.Path
+    path : Union[pathlib.Path, str]
         The path to the structure file. If the file has a suffix, it will be used to
         determine how to read the file. If the file has no suffix, or the suffix is
         ".vasp", it is read as a VASP POSCAR file, using CASM. If the suffix is
@@ -49,6 +49,7 @@ def read_structure(
         A CASM Structure read from the file.
 
     """
+    path = pathlib.Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Structure file '{path}' does not exist.")
 
@@ -95,7 +96,7 @@ Neither CASM nor ASE recognize the file format.""")
 
 
 def read_structure_traj(
-    path: pathlib.Path,
+    path: typing.Union[pathlib.Path, str],
     format: typing.Optional[str] = None,
 ) -> list[xtal.Structure]:
     """Read a structure trajectory from a file.
@@ -115,7 +116,7 @@ def read_structure_traj(
 
     Parameters
     ----------
-    path : pathlib.Path
+    path : Union[pathlib.Path, str]
         The path to the structure file. If the file has a suffix, it will be used to
         determine how to read the file. If the file has no suffix, or the suffix is
         ".vasp", it is read as a VASP POSCAR file, using CASM. If the suffix is
@@ -134,6 +135,7 @@ def read_structure_traj(
         A CASM Structure trajectory read from the file.
 
     """
+    path = pathlib.Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Structure file '{path}' does not exist.")
 
@@ -184,7 +186,7 @@ Neither CASM nor ASE recognize the file format.""")
 
 
 def write_structure(
-    path: pathlib.Path,
+    path: typing.Union[pathlib.Path, str],
     casm_structure: xtal.Structure,
     format: typing.Optional[str] = None,
     force: bool = False,
@@ -203,7 +205,7 @@ def write_structure(
 
     Parameters
     ----------
-    path : pathlib.Path
+    path : Union[pathlib.Path, str]
         The path to the structure file. If the file has no suffix, or the suffix is
         ".vasp", it will be written as a VASP POSCAR file, using CASM. If the suffix
         is ".json" or ".casm", it will be written as a CASM Structure JSON file, using
@@ -223,6 +225,7 @@ def write_structure(
         By default, messages about writing the file will be printed. If `quiet` is
         True, no messages will be printed.
     """
+    path = pathlib.Path(path)
     if not path.parent.exists():
         raise FileNotFoundError(f"Parent directory '{path.parent}' does not exist.")
 
@@ -274,7 +277,7 @@ Neither CASM nor ASE support the file format.""")
 
 
 def write_structure_traj(
-    path: pathlib.Path,
+    path: typing.Union[pathlib.Path, str],
     casm_structure_traj: list[xtal.Structure],
     format: typing.Optional[str] = None,
     force: bool = False,
@@ -293,7 +296,7 @@ def write_structure_traj(
 
     Parameters
     ----------
-    path : pathlib.Path
+    path : Union[pathlib.Path, str]
         The path to the structure file. If the file has no suffix, or the suffix is
         ".vasp", it will be written as a VASP POSCAR file, using CASM. If the suffix
         is ".json" or ".casm", it will be written as a CASM Structure JSON file, using
@@ -313,6 +316,7 @@ def write_structure_traj(
         By default, messages about writing the file will be printed. If `quiet` is
         True, no messages will be printed.
     """
+    path = pathlib.Path(path)
     if not path.parent.exists():
         raise FileNotFoundError(f"Parent directory '{path.parent}' does not exist.")
 

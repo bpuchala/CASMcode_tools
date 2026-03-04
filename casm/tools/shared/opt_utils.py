@@ -87,7 +87,7 @@ class StrainDispVarTool:
             The strain metric to use. Options are "GLstrain", "Hstrain", and "EAstrain".
             See :class:`libcasm.xtal.StrainConverter` for more details. The metrics
             "Ustrain" and "Bstrain" are not supported for stress conversions.
-        strain_basis: Optional[np.ndarray] = None
+        strain_basis: typing.Union[np.ndarray, str, None] = None
             The basis to use for the strain metric. If None, the identity matrix is
             used. If "symmetry_adapted", then the symmetry adapted basis is used
             (see :func:`libcasm.xtal.make_symmetry_adapted_strain_basis`).
@@ -353,6 +353,19 @@ class StrainDispVarTool:
                 # stress = 1/V_1 * dU_k/dE^EA_1k
                 # dU_k/dE^EA_1k = V_1 * stress
                 grad_strain_standard = volume_ref * stress  # (6,)
+            elif self.strain_metric == "Ustrain":
+                # dU_k/dE^U_1k = (V_1/2) (S @ U + U @ S)
+                Q, U = self.strain_converter.F_to_QU(F)
+                S = stress_pk2_3x3
+                grad_strain_standard = volume_ref * 0.5 * to_kelvin(S @ U + U @ S)
+
+            elif self.strain_metric == "Bstrain":
+                # B = U - I -> dU_k/dE^B_1k = dU_k/dE^U_1k
+                # dU_k/dE^B_1k = (V_1/2) (S @ U + U @ S)
+                Q, U = self.strain_converter.F_to_QU(F)
+                S = stress_pk2_3x3
+                grad_strain_standard = volume_ref * 0.5 * to_kelvin(S @ U + U @ S)
+
             else:
                 raise ValueError(
                     "Unsupported strain metric for stress conversion: "

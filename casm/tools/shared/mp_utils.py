@@ -1,4 +1,4 @@
-"""Interface with `Materials Project <https://next-gen.materialsproject.org/`_"""
+"""Interface with `Materials Project <https://next-gen.materialsproject.org/>`_"""
 
 import json
 import os

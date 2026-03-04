@@ -1,7 +1,7 @@
 import math
-import pytest
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation
 
 import casm.tools.shared.opt_utils as opt_utils
@@ -210,7 +210,7 @@ def test_StrainDispVarTool_standard_rotated():
     # expected strain components:
     # Hstrain = log(F.T * F) / 2
     F11 = 1.8 / 1.6
-    expected_x[6:9] = math.log(F11 ** 2) / 2
+    expected_x[6:9] = math.log(F11**2) / 2
     assert np.allclose(x, expected_x)
 
     # check re-created structure
@@ -284,7 +284,7 @@ def test_StrainDispVarTool_standard():
     # expected strain components:
     # Hstrain = log(F.T * F) / 2
     F11 = 1.8 / 1.6
-    expected_x[6:9] = math.log(F11 ** 2) / 2
+    expected_x[6:9] = math.log(F11**2) / 2
     assert np.allclose(x, expected_x)
 
     # check re-created structure
@@ -298,7 +298,7 @@ def test_StrainDispVarTool_standard():
     assert np.allclose(grad, expected_grad)
 
 
-@pytest.mark.xfail(reason="To be determined...")
+# @pytest.mark.xfail(reason="To be determined...")
 def test_StrainDispVarTool_Ustrain():
     reference_structure = hcp_reference_structure()
     structure = hcp_structure_2()
@@ -444,7 +444,7 @@ def test_StrainDispVarTool_strainonly():
     # expected strain components:
     expected_x = np.zeros((6,))
     F11 = 1.8 / 1.6
-    expected_x[0:3] = math.log(F11 ** 2) / 2
+    expected_x[0:3] = math.log(F11**2) / 2
     assert np.allclose(x, expected_x)
 
     # check re-created structure
@@ -483,7 +483,7 @@ def test_StrainDispVarTool_strainonly_GLstrain():
     # expected strain components:
     expected_x = np.zeros((6,))
     F11 = 1.8 / 1.6
-    expected_x[0:3] = (F11 ** 2 - 1) / 2
+    expected_x[0:3] = (F11**2 - 1) / 2
     assert np.allclose(x, expected_x)
 
     # because disp is not included, the test structure should not be equivalent

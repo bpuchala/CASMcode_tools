@@ -2,7 +2,7 @@ import math
 import pathlib
 import sys
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 from tabulate import tabulate
@@ -47,9 +47,9 @@ def vacancies_allowed(parent_prim: casmconfig.Prim) -> bool:
 
 
 def _get_max_n_atoms_for_parent_structure(
-        max_n_atoms: Optional[int],
-        parent_structure: xtal.Structure,
-        child: xtal.Structure,
+    max_n_atoms: Optional[int],
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
 ):
     """Get the maximum number of atoms to use when generating supercells of the child
     when the parent is provided as a structure.
@@ -74,8 +74,8 @@ def _get_max_n_atoms_for_parent_structure(
 
 
 def _get_max_n_atoms_for_parent_prim(
-        max_n_atoms: Optional[int],
-        child: xtal.Structure,
+    max_n_atoms: Optional[int],
+    child: xtal.Structure,
 ):
     """Get the maximum number of atoms to use when generating supercells of the child
     when the parent is provided as a prim.
@@ -98,9 +98,9 @@ def _get_max_n_atoms_for_parent_prim(
 
 
 def _make_child_to_parent_vol(
-        max_n_atoms: int,
-        parent_structure: xtal.Structure,
-        child: xtal.Structure,
+    max_n_atoms: int,
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
 ):
     child_n_atoms = len(child.atom_type())
     parent_n_atoms = len(parent_structure.atom_type())
@@ -121,13 +121,13 @@ def _make_child_to_parent_vol(
 
 
 def _make_T_pairs_for_parent_structure(
-        parent_structure: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        min_n_atoms: int = 1,
-        max_n_atoms: Optional[int] = None,
-        child_T_list: Optional[list[np.ndarray]] = None,
-        parent_T_list: Optional[list[np.ndarray]] = None,
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    min_n_atoms: int = 1,
+    max_n_atoms: Optional[int] = None,
+    child_T_list: Optional[list[np.ndarray]] = None,
+    parent_T_list: Optional[list[np.ndarray]] = None,
 ):
     """Make a list of (T_child, T_parent) pairs for the search when a parent structure
     is given.
@@ -261,13 +261,13 @@ class ParentVolumeSearchOptions:
     """
 
     def __init__(
-            self,
-            method: str = "atoms-per-unitcell",
-            expected_n_vacancy: Optional[int] = None,
-            expected_n_interstitial: Optional[int] = None,
-            parent_volume_range: Optional[tuple[int, int]] = None,
-            atoms_per_unitcell_range: Optional[tuple[float, float]] = None,
-            n_expected_atoms_per_parent_unitcell: Optional[int] = None,
+        self,
+        method: str = "atoms-per-unitcell",
+        expected_n_vacancy: Optional[int] = None,
+        expected_n_interstitial: Optional[int] = None,
+        parent_volume_range: Optional[tuple[int, int]] = None,
+        atoms_per_unitcell_range: Optional[tuple[float, float]] = None,
+        n_expected_atoms_per_parent_unitcell: Optional[int] = None,
     ):
         """
 
@@ -347,10 +347,10 @@ class ParentVolumeSearchOptions:
         )
 
     def parent_vol_range(
-            self,
-            child: xtal.Structure,
-            parent_prim: casmconfig.Prim,
-            child_vol: int,
+        self,
+        child: xtal.Structure,
+        parent_prim: casmconfig.Prim,
+        child_vol: int,
     ):
         """Return the parent volume range as a tuple of (min, max) integer volumes.
 
@@ -396,11 +396,11 @@ class ParentVolumeSearchOptions:
 
             # validate that self.atoms_per_unitcell_range is a tuple[float, float]:
             if (
-                    not isinstance(atoms_per_unitcell_range, tuple)
-                    or len(atoms_per_unitcell_range) != 2
-                    or not all(
-                isinstance(x, (int, float)) for x in atoms_per_unitcell_range
-            )
+                not isinstance(atoms_per_unitcell_range, tuple)
+                or len(atoms_per_unitcell_range) != 2
+                or not all(
+                    isinstance(x, (int, float)) for x in atoms_per_unitcell_range
+                )
             ):
                 raise ValueError(
                     "Error in ParentVolumeSearchOptions: "
@@ -408,9 +408,9 @@ class ParentVolumeSearchOptions:
                     "but atoms_per_unitcell_range is not a tuple of two numbers."
                 )
             if (
-                    atoms_per_unitcell_range[0] <= 0.0
-                    or atoms_per_unitcell_range[1] <= 0.0
-                    or atoms_per_unitcell_range[0] > atoms_per_unitcell_range[1]
+                atoms_per_unitcell_range[0] <= 0.0
+                or atoms_per_unitcell_range[1] <= 0.0
+                or atoms_per_unitcell_range[0] > atoms_per_unitcell_range[1]
             ):
                 raise ValueError(
                     "Error in ParentVolumeSearchOptions: "
@@ -453,9 +453,9 @@ class ParentVolumeSearchOptions:
                 )
             # validate that self.parent_volume_range is a tuple[int, int]:
             if (
-                    not isinstance(self.parent_volume_range, tuple)
-                    or len(self.parent_volume_range) != 2
-                    or not all(isinstance(x, int) for x in self.parent_volume_range)
+                not isinstance(self.parent_volume_range, tuple)
+                or len(self.parent_volume_range) != 2
+                or not all(isinstance(x, int) for x in self.parent_volume_range)
             ):
                 raise ValueError(
                     "Error in ParentVolumeSearchOptions: "
@@ -463,9 +463,9 @@ class ParentVolumeSearchOptions:
                     "but parent_volume_range is not a tuple of two integers."
                 )
             if (
-                    self.parent_volume_range[0] < 1
-                    or self.parent_volume_range[1] < 1
-                    or self.parent_volume_range[0] > self.parent_volume_range[1]
+                self.parent_volume_range[0] < 1
+                or self.parent_volume_range[1] < 1
+                or self.parent_volume_range[0] > self.parent_volume_range[1]
             ):
                 raise ValueError(
                     "Error in ParentVolumeSearchOptions: "
@@ -483,16 +483,16 @@ class ParentVolumeSearchOptions:
 
 
 def _make_T_pairs_for_parent_prim(
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        child_atom_count_of_parent_types: np.ndarray,
-        min_atom_count_per_parent_unitcell: np.ndarray,
-        max_atom_count_per_parent_unitcell: np.ndarray,
-        min_n_atoms: int = 1,
-        max_n_atoms: Optional[int] = None,
-        child_T_list: Optional[list[np.ndarray]] = None,
-        parent_T_list: Optional[list[np.ndarray]] = None,
-        parent_vol_options: Optional[ParentVolumeSearchOptions] = None,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    child_atom_count_of_parent_types: np.ndarray,
+    min_atom_count_per_parent_unitcell: np.ndarray,
+    max_atom_count_per_parent_unitcell: np.ndarray,
+    min_n_atoms: int = 1,
+    max_n_atoms: Optional[int] = None,
+    child_T_list: Optional[list[np.ndarray]] = None,
+    parent_T_list: Optional[list[np.ndarray]] = None,
+    parent_vol_options: Optional[ParentVolumeSearchOptions] = None,
 ):
     """Make a list of (T_child, T_parent) pairs for the search when a parent structure
     is given.
@@ -629,7 +629,7 @@ def _make_T_pairs_for_parent_prim(
 
             # Check if the parent atom counts are within the min/max range
             if np.all(
-                    superchild_atom_count >= min_atom_count_per_parent_unitcell * parent_vol
+                superchild_atom_count >= min_atom_count_per_parent_unitcell * parent_vol
             ) and np.all(
                 superchild_atom_count <= max_atom_count_per_parent_unitcell * parent_vol
             ):
@@ -646,29 +646,29 @@ class StructureMappingSearchOptions:
     """Options controlling the structure mapping search."""
 
     def __init__(
-            self,
-            max_n_atoms: Optional[int] = None,
-            min_n_atoms: int = 1,
-            parent_vol_options: Optional[ParentVolumeSearchOptions] = None,
-            child_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
-            parent_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
-            total_min_cost: float = 0.0,
-            total_max_cost: float = 0.3,
-            total_k_best: int = 1,
-            no_remove_mean_displacement: bool = False,
-            fix_parent_supercell: bool = False,
-            fix_child_supercell: bool = False,
-            lattice_mapping_min_cost: Optional[float] = 0.0,
-            lattice_mapping_max_cost: Optional[float] = 1e20,
-            lattice_mapping_k_best: Optional[int] = 10,
-            lattice_mapping_reorientation_range: Optional[int] = 1,
-            lattice_mapping_cost_method: str = "symmetry_breaking_strain_cost",
-            atom_mapping_cost_method: str = "symmetry_breaking_disp_cost",
-            forced_on: Optional[dict[int, int]] = None,
-            forced_off: Optional[list[tuple[int, int]]] = None,
-            lattice_cost_weight: float = 0.5,
-            cost_tol: Optional[float] = 1e-5,
-            deduplication_interpolation_factors: Optional[list[float]] = None,
+        self,
+        max_n_atoms: Optional[int] = None,
+        min_n_atoms: int = 1,
+        parent_vol_options: Optional[ParentVolumeSearchOptions] = None,
+        child_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
+        parent_transformation_matrix_to_super_list: Optional[list[np.ndarray]] = None,
+        total_min_cost: float = 0.0,
+        total_max_cost: float = 0.3,
+        total_k_best: int = 1,
+        no_remove_mean_displacement: bool = False,
+        fix_parent_supercell: bool = False,
+        fix_child_supercell: bool = False,
+        lattice_mapping_min_cost: Optional[float] = 0.0,
+        lattice_mapping_max_cost: Optional[float] = 1e20,
+        lattice_mapping_k_best: Optional[int] = 10,
+        lattice_mapping_reorientation_range: Optional[int] = 1,
+        lattice_mapping_cost_method: str = "symmetry_breaking_strain_cost",
+        atom_mapping_cost_method: str = "symmetry_breaking_disp_cost",
+        forced_on: Optional[dict[int, int]] = None,
+        forced_off: Optional[list[tuple[int, int]]] = None,
+        lattice_cost_weight: float = 0.5,
+        cost_tol: Optional[float] = 1e-5,
+        deduplication_interpolation_factors: Optional[list[float]] = None,
     ):
         """
 
@@ -896,14 +896,14 @@ def _make_atom_cost_f(opt: StructureMappingSearchOptions):
 
 class MappingSearchData:
     def __init__(
-            self,
-            child: xtal.Structure,
-            parent_structure: Optional[xtal.Structure] = None,
-            parent_prim: Optional[casmconfig.Prim] = None,
-            options: Optional[StructureMappingSearchOptions] = None,
-            mappings: Optional[list[mapinfo.ScoredStructureMapping]] = None,
-            uuids: Optional[list[str]] = None,
-            options_history: Optional[list[StructureMappingSearchOptions]] = None,
+        self,
+        child: xtal.Structure,
+        parent_structure: Optional[xtal.Structure] = None,
+        parent_prim: Optional[casmconfig.Prim] = None,
+        options: Optional[StructureMappingSearchOptions] = None,
+        mappings: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+        uuids: Optional[list[str]] = None,
+        options_history: Optional[list[StructureMappingSearchOptions]] = None,
     ):
 
         if parent_structure is None and parent_prim is None:
@@ -1152,7 +1152,7 @@ class MappingSearchData:
                 )
         else:
             if not set(self.child_atom_types).issubset(
-                    set(self.parent_prim_atom_types)
+                set(self.parent_prim_atom_types)
             ):
                 atom_types_mismatch_error(
                     self.parent_prim_atom_types, self.child_atom_types
@@ -1166,7 +1166,7 @@ class MappingSearchData:
         """
         if self.parent_structure is not None:
             if not np.allclose(
-                    self.parent_structure_atom_frac, self.child_atom_frac, atol=1e-5
+                self.parent_structure_atom_frac, self.child_atom_frac, atol=1e-5
             ):
                 atom_fraction_mismatch_error(
                     self.parent_structure_atom_frac, self.child_atom_frac
@@ -1305,7 +1305,7 @@ class MappingSearchData:
             self.options = None
 
     def update_options_to_next_n_atoms(
-            self,
+        self,
     ):
         n_atoms_parent = len(self.parent.atom_type())
         n_atoms_child = len(self.child.atom_type())
@@ -1358,8 +1358,8 @@ class MappingSearchData:
 
     @staticmethod
     def from_dict(
-            self,
-            data: dict,
+        self,
+        data: dict,
     ):
         """Create a MappingSearchData object from a Python dictionary.
 
@@ -1495,10 +1495,10 @@ def atom_fraction_mismatch_error(parent_structure_atom_frac, child_atom_frac) ->
 
 
 def invalid_forced_on_values_error(
-        parent_site_index: int,
-        child_atom_index: int,
-        child_type: str,
-        allowed_types: list[str],
+    parent_site_index: int,
+    child_atom_index: int,
+    child_type: str,
+    allowed_types: list[str],
 ) -> None:
     """Print an error message if the `--forced-on` option is used with invalid
     values."""
@@ -1715,9 +1715,9 @@ def invalid_min_n_atoms_error(min_n_atoms: int):
 
 
 def invalid_max_n_atoms_error(
-        min_n_atoms: int,
-        max_n_atoms: int,
-        computed_msg: str,
+    min_n_atoms: int,
+    max_n_atoms: int,
+    computed_msg: str,
 ):
     """Print an error message for invalid max_n_atoms."""
 
@@ -1800,9 +1800,9 @@ def invalid_deduplication_interpolation_factors_error(dedup_factors):
 
 
 def calculate_all_costs(
-        result: mapinfo.ScoredStructureMapping,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
+    result: mapinfo.ScoredStructureMapping,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
 ):
     prim_data = mapsearch.PrimSearchData(
         prim=parent_prim.xtal_prim,
@@ -1864,12 +1864,12 @@ def calculate_all_costs(
     }
 
 
-def _tabulate_results(
-        opt: StructureMappingSearchOptions,
-        search_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
+def tabulate_results(
+    opt: StructureMappingSearchOptions,
+    search_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
 ) -> str:
     """Tabulate the results of the search."""
 
@@ -1947,16 +1947,16 @@ def _tabulate_results(
     print()
 
 
-def _add_new_results(
-        new_results: list[mapinfo.ScoredStructureMapping],
-        existing_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        chain_orbits: list[list[list[xtal.Structure]]],
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        k_best: int,
-        cost_tol: float,
-        deduplication_interpolation_factors: list[float],
+def add_new_results(
+    new_results: list[mapinfo.ScoredStructureMapping],
+    existing_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    chain_orbits: list[list[list[xtal.Structure]]],
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    k_best: int,
+    cost_tol: float,
+    deduplication_interpolation_factors: list[float],
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -2075,7 +2075,7 @@ def _add_new_results(
         while next_index < len(search_results):
             next_cost = search_results[next_index].total_cost()
             if math.isclose(
-                    search_results[k_best - 1].total_cost(), next_cost, abs_tol=cost_tol
+                search_results[k_best - 1].total_cost(), next_cost, abs_tol=cost_tol
             ):
                 next_index += 1
             else:
@@ -2088,15 +2088,15 @@ def _add_new_results(
     return search_results, uuids, chain_orbits
 
 
-def _write_results(
-        search_results: list[mapinfo.ScoredStructureMapping],
-        uuids: list[str],
-        parent: xtal.Structure,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        results_dir: pathlib.Path,
-        options: StructureMappingSearchOptions,
-        options_history: list[StructureMappingSearchOptions],
+def write_results(
+    search_results: list[mapinfo.ScoredStructureMapping],
+    uuids: list[str],
+    parent: xtal.Structure,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    results_dir: pathlib.Path,
+    options: StructureMappingSearchOptions,
+    options_history: list[StructureMappingSearchOptions],
 ) -> None:
     """Write the results of the search.
 
@@ -2137,10 +2137,110 @@ def _write_results(
     )
 
 
+def read_results(
+    results_dir: Union[pathlib.Path, str],
+    parent_prim: Optional[casmconfig.Prim] = None,
+    options: Optional[StructureMappingSearchOptions] = None,
+):
+    """Read the results of a previous search, if they exist.
+
+    Parameters
+    ----------
+    results_dir : Union[pathlib.Path, str]
+        The directory in which to read the results.
+    parent_prim : casmconfig.Prim
+        The parent structure, as a Prim. If provided, must be the same as the previous
+        search, otherwise it is read from the previous results.
+    options : Optional[StructureMappingSearchOptions] = None
+        The current search options. This is used to validate that the lattice mapping
+        cost method, atom mapping cost method, and lattice cost weight have not changed
+        since the previous search.
+
+    Returns
+    -------
+    parent : Optional[xtal.Structure]
+        The parent structure, read from the previous results if it exists, otherwise
+        None.
+    child : Optional[xtal.Structure]
+        The child structure, read from the previous results if it exists, otherwise
+        None.
+    parent_prim : Optional[casmconfig.Prim]
+        The parent structure, as a Prim, read from the previous results if they exist,
+        otherwise the provided parent_prim.
+    search_results : list[libcasm.mapping.info.ScoredStructureMapping]
+        The search results from the previous search, or an empty list if there are no
+        previous results.
+    uuids : list[str]
+        The UUIDs corresponding to the search results from the previous search, or an
+        empty list if there are no previous results.
+    options_history : list[StructureMappingSearchOptions]
+        The history of options from the previous search, or an empty list if there are
+        no previous results.
+    """
+    results_dir = pathlib.Path(results_dir)
+
+    # Initialize results and options history
+    parent = None
+    child = None
+    search_results = []
+    uuids = []
+    options_history = []
+
+    if results_dir is None:
+        return (parent_prim, search_results, uuids, options_history)
+
+    # Handle merging with existing results
+    if results_dir.exists():
+        data = read_required(results_dir / "mappings.json")
+
+        parent_data = data.get("parent_structure", None)
+        if parent_data is not None:
+            parent = xtal.Structure.from_dict(parent_data)
+
+        child_data = data.get("child", None)
+        if child_data is not None:
+            child = xtal.Structure.from_dict(child_data)
+
+        if parent_prim is None:
+            parent_prim = casmconfig.Prim.from_dict(data["parent_prim"])
+
+        search_results = [
+            mapinfo.ScoredStructureMapping.from_dict(data=x, prim=parent_prim.xtal_prim)
+            for x in data["mappings"]
+        ]
+        uuids = data.get("uuids", [])
+
+        options_history = [
+            StructureMappingSearchOptions.from_dict(x)
+            for x in data.get("options_history", [])
+        ]
+        if len(options_history) > 0 and options is not None:
+            last_options = options_history[-1]
+
+            if (
+                options.lattice_mapping_cost_method
+                != last_options.lattice_mapping_cost_method
+            ):
+                different_lattice_mapping_cost_method_error()
+            if (
+                options.atom_mapping_cost_method
+                != last_options.atom_mapping_cost_method
+            ):
+                different_atom_mapping_cost_method_error()
+            if not math.isclose(
+                options.lattice_cost_weight,
+                last_options.lattice_cost_weight,
+                abs_tol=1e-5,
+            ):
+                different_lattice_cost_weight_error()
+
+    return (parent, child, parent_prim, search_results, uuids, options_history)
+
+
 def _validate_options_for_parent_structure(
-        opt: StructureMappingSearchOptions,
-        parent_structure: xtal.Structure,
-        child: xtal.Structure,
+    opt: StructureMappingSearchOptions,
+    parent_structure: xtal.Structure,
+    child: xtal.Structure,
 ) -> None:
     """Raise if atom types or fractions differ between parent and child."""
 
@@ -2252,16 +2352,16 @@ def _validate_options_for_parent_structure(
     # Validate that deduplication_interpolation_factors is a list of floats:
     dedup_factors = opt.deduplication_interpolation_factors
     if not isinstance(dedup_factors, list) or not all(
-            isinstance(factor, float) for factor in dedup_factors
+        isinstance(factor, float) for factor in dedup_factors
     ):
         invalid_deduplication_interpolation_factors_error(dedup_factors)
 
 
 def _validate_options_for_parent_prim(
-        opt: StructureMappingSearchOptions,
-        parent_structure: Optional[xtal.Structure],
-        parent_prim: casmconfig.Prim,
-        child: xtal.Structure,
+    opt: StructureMappingSearchOptions,
+    parent_structure: Optional[xtal.Structure],
+    parent_prim: casmconfig.Prim,
+    child: xtal.Structure,
 ) -> None:
     # TODO
 
@@ -2273,13 +2373,13 @@ def _validate_options_for_parent_prim(
 
 
 def _mapping_impl(
-        opt: StructureMappingSearchOptions,
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        parent_structure: Optional[xtal.Structure] = None,
-        existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
-        existing_uuids: Optional[list[str]] = None,
-        chain_orbits: Optional[list[list[list[xtal.Structure]]]] = None,
+    opt: StructureMappingSearchOptions,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    parent_structure: Optional[xtal.Structure] = None,
+    existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+    existing_uuids: Optional[list[str]] = None,
+    chain_orbits: Optional[list[list[list[xtal.Structure]]]] = None,
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -2431,7 +2531,7 @@ def _mapping_impl(
     _child_T_list = opt.child_transformation_matrix_to_super_list
     _parent_T_list = opt.parent_transformation_matrix_to_super_list
     _enable_symmetry_breaking_atom_cost = (
-            opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost"
+        opt.atom_mapping_cost_method == "symmetry_breaking_disp_cost"
     )
     _total_min_cost = opt.total_min_cost
     _total_max_cost = opt.total_max_cost
@@ -2725,7 +2825,7 @@ def _mapping_impl(
             search.partition()
 
         # Add new results to existing results, deduplicating them
-        search_results, uuids, chain_orbits = _add_new_results(
+        search_results, uuids, chain_orbits = add_new_results(
             new_results=search.results().data(),
             existing_results=search_results,
             uuids=uuids,
@@ -2760,12 +2860,12 @@ def _mapping_impl(
 
 
 def map_to_structure(
-        child: xtal.Structure,
-        parent_structure: xtal.Structure,
-        parent_prim: Optional[casmconfig.Prim] = None,
-        opt: Optional[StructureMappingSearchOptions] = None,
-        existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
-        existing_uuids: Optional[list[str]] = None,
+    child: xtal.Structure,
+    parent_structure: xtal.Structure,
+    parent_prim: Optional[casmconfig.Prim] = None,
+    opt: Optional[StructureMappingSearchOptions] = None,
+    existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+    existing_uuids: Optional[list[str]] = None,
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -2843,11 +2943,11 @@ def map_to_structure(
 
 
 def map_to_prim(
-        child: xtal.Structure,
-        parent_prim: casmconfig.Prim,
-        opt: Optional[StructureMappingSearchOptions] = None,
-        existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
-        existing_uuids: Optional[list[str]] = None,
+    child: xtal.Structure,
+    parent_prim: casmconfig.Prim,
+    opt: Optional[StructureMappingSearchOptions] = None,
+    existing_results: Optional[list[mapinfo.ScoredStructureMapping]] = None,
+    existing_uuids: Optional[list[str]] = None,
 ) -> tuple[
     list[mapinfo.ScoredStructureMapping],
     list[str],
@@ -2973,19 +3073,19 @@ class StructureMappingSearch:
     """
 
     def __init__(
-            self,
-            opt: StructureMappingSearchOptions,
+        self,
+        opt: StructureMappingSearchOptions,
     ):
         self.opt: StructureMappingSearchOptions = opt
         """StructureMappingSearchOptions: Options for the search."""
 
     def __call__(
-            self,
-            parent: xtal.Structure,
-            parent_prim: Optional[casmconfig.Prim],
-            child: xtal.Structure,
-            results_dir: pathlib.Path,
-            merge: bool = False,
+        self,
+        parent: xtal.Structure,
+        parent_prim: Optional[casmconfig.Prim],
+        child: xtal.Structure,
+        results_dir: pathlib.Path,
+        merge: bool = False,
     ):
         """Perform the structure mapping search.
 
@@ -3012,50 +3112,15 @@ class StructureMappingSearch:
                 xtal.Prim.from_atom_coordinates(structure=parent)
             )
 
-        # Initialize results and options history
-        search_results = []
-        uuids = []
-        options_history = []
+        if results_dir.exists() and merge is False:
+            results_dir_exists_error(results_dir=results_dir)
+            sys.exit(1)
 
-        # Handle merging with existing results
-        if results_dir.exists():
-            if merge is False:
-                results_dir_exists_error(results_dir=results_dir)
-                sys.exit(1)
-            else:
-                data = read_required(results_dir / "mappings.json")
-
-                search_results = [
-                    mapinfo.ScoredStructureMapping.from_dict(
-                        data=x, prim=parent_prim.xtal_prim
-                    )
-                    for x in data["mappings"]
-                ]
-                uuids = data.get("uuids", [])
-
-                options_history = [
-                    StructureMappingSearchOptions.from_dict(x)
-                    for x in data.get("options_history", [])
-                ]
-                if len(options_history) > 0:
-                    last_options = options_history[-1]
-
-                    if (
-                            self.opt.lattice_mapping_cost_method
-                            != last_options.lattice_mapping_cost_method
-                    ):
-                        different_lattice_mapping_cost_method_error()
-                    if (
-                            self.opt.atom_mapping_cost_method
-                            != last_options.atom_mapping_cost_method
-                    ):
-                        different_atom_mapping_cost_method_error()
-                    if not math.isclose(
-                            self.opt.lattice_cost_weight,
-                            last_options.lattice_cost_weight,
-                            abs_tol=1e-5,
-                    ):
-                        different_lattice_cost_weight_error()
+        _, _, _, search_results, uuids, options_history = read_results(
+            results_dir=results_dir,
+            parent_prim=parent_prim,
+            options=self.opt,
+        )
 
         # Perform the structure mapping search
         search_results, uuids = map_to_structure(
@@ -3068,7 +3133,7 @@ class StructureMappingSearch:
         )
 
         # Write final results
-        _write_results(
+        write_results(
             search_results=search_results,
             uuids=uuids,
             parent=parent,
@@ -3086,7 +3151,7 @@ class StructureMappingSearch:
         sys.stdout.flush()
 
         # Display results table
-        _tabulate_results(
+        tabulate_results(
             opt=self.opt,
             search_results=search_results,
             uuids=uuids,
