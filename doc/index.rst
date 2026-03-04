@@ -117,7 +117,7 @@ Documentation
     :maxdepth: 2
 
     Installation <installation>
-    Usage <usage>
+    Usage <usage/index>
     Reference <reference/casm/index>
     Bibliography <bibliography>
 

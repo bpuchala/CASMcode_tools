@@ -81,6 +81,9 @@ extensions = [
     "sphinxcontrib.bibtex",
     "sphinx.ext.intersphinx",
     "numpydoc",
+    "sphinx_copybutton",
+    "sphinx_togglebutton",
+    "myst_nb",
 ]
 
 bibtex_bibfiles = ["refs.bib"]
@@ -189,6 +192,8 @@ html_css_files = [
 ]
 html_favicon = "_static/favicon-16x16.png"
 html_show_sourcelink = False
+
+copybutton_selector = "div.highlight pre, div.highlight.casm-code-block code"
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
