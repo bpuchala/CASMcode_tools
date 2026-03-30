@@ -626,7 +626,6 @@ def _validate_forced_off(value):
 
 
 def _validate_dedup_interp_factors(value):
-
     import json
 
     exception = argparse.ArgumentTypeError(
@@ -715,7 +714,7 @@ def make_search_parser(m):
         "--k-best",
         type=int,
         default=100,
-        help="Total number of mapping results.",
+        help="Total number of mapping results (default=100).",
     )
     total.add_argument(
         "--cost-tol",

@@ -1,17 +1,27 @@
 """Methods used to implement ``casm-map``"""
 
+import json
 import os
+import pathlib
 import sys
 import typing
 
 import numpy as np
 
+import libcasm.clexulator as casmclex
 import libcasm.configuration as casmconfig
 import libcasm.configuration.io as config_io
+import libcasm.group as casmgroup
+import libcasm.irreps as casmirreps
 import libcasm.mapping.info as mapinfo
 import libcasm.mapping.methods as mapmethods
 import libcasm.sym_info as sym_info
 import libcasm.xtal as xtal
+from casm.tools.shared.misc import pretty
+from casm.tools.shared.sqlite_cache import (
+    LocalCache,
+    UserCache,
+)
 
 
 def _suppress_output(func, *args, **kwargs):
@@ -679,3 +689,342 @@ def child_supercell_size(
         structure_mapping=structure_mapping,
     )
     return abs(int(round(np.linalg.det(T_child))))
+
+
+def get_subgroup_orbits(
+    symgroup: casmgroup.Group,
+) -> list[list[list[int]]]:
+    """Get subgroup orbits for a given symmetry group and set of indices, with caching.
+
+    Notes
+    -----
+
+    A :class:`~libcasm.group.Subset` object is created from the head group and indices
+    of the given symmetry group, and the subgroup orbits are computed from this Subset
+    object. The result is completely determined by the multiplication table of the head
+    group and the indices of the elements in the subgroup. Therefore, the result
+    can be cached using :class:`~casm.tools.shared.sqlite_cache.UserCache` to avoid
+    redundant calculations.
+
+    The cache key is constructed using:
+
+    .. code-block:: Python
+
+        head_group = symgroup.head_group
+        if head_group is None:
+            head_group = symgroup
+        indices = set(symgroup.head_group_index)
+        data = dict(
+            multiplication_table=head_group.multiplication_table,
+            indices=list(indices),
+        )
+        key = json.dumps(data, sort_keys=True)
+
+    The stored value is:
+
+    .. code-block:: Python
+
+        subset = casmgroup.Subset(group=head_group, indices=indices)
+        subset.all_subgroups()
+        subgroup_orbits = subset.all_subgroup_orbits()
+        value = json.dumps(subgroup_orbits, sort_keys=True)
+
+
+    Parameters
+    ----------
+    symgroup: casmgroup.Group
+        The symmetry group for which to compute subgroup orbits.
+
+    Returns
+    -------
+    subgroup_orbits: list[list[list[int]]]
+        All subgroup orbits.
+
+    """
+    ucache = UserCache()
+    head_group = symgroup.head_group
+    if head_group is None:
+        head_group = symgroup
+    indices = set(symgroup.head_group_index)
+
+    data = dict(
+        multiplication_table=head_group.multiplication_table,
+        indices=list(indices),
+    )
+    key = json.dumps(data, sort_keys=True)
+    value = ucache.get(cache="subgroup_orbits", key=key)
+    if value is None:
+        subset = casmgroup.Subset(group=head_group, indices=indices)
+        subset.all_subgroups()
+        subgroup_orbits = subset.all_subgroup_orbits()
+        value = json.dumps(subgroup_orbits, sort_keys=True)
+        ucache.store(cache="subgroup_orbits", key=key, value=value)
+    else:
+        subgroup_orbits = json.loads(value)
+    return subgroup_orbits
+
+
+def get_global_dof_space(
+    results_dir: typing.Union[pathlib.Path, str],
+    supercell: casmconfig.Supercell,
+    dof_key: str,
+) -> tuple[list[casmirreps.IrrepInfo], casmclex.DoFSpace]:
+    """Get symmetry adapted global DoF space for a given supercell and DoF key, with
+    caching.
+
+    Notes
+    -----
+    This generates a default symmetry-adapted basis for the global DoF space. The
+    default value can be overridden by customizing the irreps and then combining
+    them into to form the symmetry-adapted basis. This process is currently
+    a bit cumbersome, but if done, the values can be stored in the cache using
+    the following approach.
+
+    The cache is stored in the results directory:
+
+    .. code-block:: Python
+
+        from casm.tools.shared.sqlite_cache import LocalCache
+
+        results_dir = pathlib.Path(results_dir)
+        lcache = LocalCache(dir=results_dir)
+
+    The cache key is:
+
+    .. code-block:: Python
+
+        data = dict(
+            transformation_matrix_to_super=supercell.transformation_matrix_to_super.tolist(),
+            dof_key=dof_key,
+        )
+        key = json.dumps(data, sort_keys=True)
+
+    The stored value is:
+
+    .. code-block:: Python
+
+        irrep_data = [irrep.to_dict() for irrep in irrep_decomposition.irreps]
+        dof_space_data = dof_space.to_dict()
+        value = json.dumps(
+            dict(
+                irreps=irrep_data,
+                dof_space=dof_space_data,
+            ),
+            sort_keys=True,
+        )
+
+    Parameters
+    ----------
+    results_dir: Union[pathlib.Path, str]
+        The directory where the mapping results / cache is stored.
+    supercell: casmconfig.Supercell
+        The supercell for which to compute the global DoF space.
+    dof_key: str
+        The DoF type. Should be a valid key for the prim.
+
+    Returns
+    -------
+    irreps: list[casmirreps.IrrepInfo]
+        A list of IrrepInfo objects describing the irreps of the global DoF space.
+    dof_space: casmclex.DoFSpace
+        A DoFSpace object describing the global DoF space, with symmetry-adapted basis
+        vectors as columns of the basis attribute.
+    """
+
+    results_dir = pathlib.Path(results_dir)
+    lcache = LocalCache(dir=results_dir)
+    data = dict(
+        transformation_matrix_to_super=supercell.transformation_matrix_to_super.tolist(),
+        dof_key=dof_key,
+    )
+    key = json.dumps(data, sort_keys=True)
+    value = lcache.get(cache="dof_spaces", key=key)
+    if value is None:
+        prim = supercell.prim
+
+        subgroup_orbits = get_subgroup_orbits(
+            symgroup=supercell.factor_group,
+        )
+
+        matrix_rep = prim.global_dof_matrix_rep(
+            key=dof_key,
+        )
+
+        irrep_decomposition = casmirreps.IrrepDecomposition(
+            matrix_rep=matrix_rep,
+            subgroup_orbits=subgroup_orbits,
+            verbosity="standard",
+        )
+
+        irreps = irrep_decomposition.irreps
+        B = irrep_decomposition.symmetry_adapted_subspace
+        B = pretty(B)
+
+        dof_space = casmclex.DoFSpace(
+            dof_key=dof_key,
+            xtal_prim=prim.xtal_prim,
+            basis=B,
+        )
+
+        irrep_data = [irrep.to_dict() for irrep in irrep_decomposition.irreps]
+        dof_space_data = dof_space.to_dict()
+        value = json.dumps(
+            dict(
+                irreps=irrep_data,
+                dof_space=dof_space_data,
+            ),
+            sort_keys=True,
+        )
+        lcache.store(cache="dof_spaces", key=key, value=value)
+    else:
+        data = json.loads(value)
+        irreps = [casmirreps.IrrepInfo.from_dict(d) for d in data["irreps"]]
+        dof_space = casmclex.DoFSpace.from_dict(
+            data=data["dof_space"],
+            xtal_prim=supercell.prim.xtal_prim,
+        )
+
+    return (irreps, dof_space)
+
+
+def get_local_dof_space(
+    results_dir: typing.Union[pathlib.Path, str],
+    supercell: casmconfig.Supercell,
+    dof_key: str,
+) -> tuple[list[casmirreps.IrrepInfo], casmclex.DoFSpace]:
+    """Get symmetry adapted local DoF space for a given supercell and DoF key, with
+    caching.
+
+    Notes
+    -----
+
+    This generates a default symmetry-adapted basis for the local DoF space. The
+    default value can be overridden by customizing the irreps and then combining
+    them into to form the symmetry-adapted basis. This process is currently
+    a bit cumbersome, but if done, the values can be stored in the cache using
+    the following approach.
+
+    The cache is stored in the results directory:
+
+    .. code-block:: Python
+
+        from casm.tools.shared.sqlite_cache import LocalCache
+
+        results_dir = pathlib.Path(results_dir)
+        lcache = LocalCache(dir=results_dir)
+
+
+    The cache key is:
+
+    .. code-block:: Python
+
+        data = dict(
+            transformation_matrix_to_super=supercell.transformation_matrix_to_super.tolist(),
+            dof_key=dof_key,
+        )
+        key = json.dumps(data, sort_keys=True)
+
+    The stored value is:
+
+    .. code-block:: Python
+
+        irrep_data = [irrep.to_dict() for irrep in irrep_decomposition.irreps]
+        dof_space_data = dof_space.to_dict()
+        value = json.dumps(
+            dict(
+                irreps=irrep_data,
+                dof_space=dof_space_data,
+            ),
+            sort_keys=True,
+        )
+
+
+    Parameters
+    ----------
+    results_dir: Union[pathlib.Path, str]
+        The directory where the mapping results / cache is stored.
+    supercell: casmconfig.Supercell
+        The supercell for which to compute the local DoF space.
+    dof_key: str
+        The DoF type. Should be a valid key for the prim.
+
+    Returns
+    -------
+    irreps: list[casmirreps.IrrepInfo]
+        A list of IrrepInfo objects describing the irreps of the local DoF space.
+    dof_space: casmclex.DoFSpace
+        A DoFSpace object describing the local DoF space, with symmetry-adapted basis
+        vectors as columns of the basis attribute.
+
+    """
+    results_dir = pathlib.Path(results_dir)
+    lcache = LocalCache(dir=results_dir)
+    data = dict(
+        transformation_matrix_to_super=supercell.transformation_matrix_to_super.tolist(),
+        dof_key=dof_key,
+    )
+    key = json.dumps(data, sort_keys=True)
+    value = lcache.get(cache="dof_spaces", key=key)
+    if value is None:
+        prim = supercell.prim
+
+        configuration = casmconfig.Configuration(
+            supercell=supercell,
+        )
+        supercell_factor_group = casmconfig.make_invariant_subgroup(
+            configuration=configuration,
+        )
+        symgroup = casmconfig.make_symgroup(supercell_factor_group)
+        subgroup_orbits = get_subgroup_orbits(
+            symgroup=symgroup,
+        )
+
+        # construct occ DoFSpace with default basis
+        dof_space = casmclex.DoFSpace(
+            dof_key=dof_key,
+            xtal_prim=prim.xtal_prim,
+            transformation_matrix_to_super=supercell.transformation_matrix_to_super,
+        )
+
+        matrix_rep = casmconfig.make_dof_space_rep(
+            group=supercell_factor_group,
+            dof_space=dof_space,
+        )
+
+        # Perform DoF space analysis
+        irrep_decomposition = casmirreps.IrrepDecomposition(
+            matrix_rep=matrix_rep,
+            subgroup_orbits=subgroup_orbits,
+            verbosity="standard",
+        )
+
+        irreps = irrep_decomposition.irreps
+        B = irrep_decomposition.symmetry_adapted_subspace
+        B = pretty(B)
+
+        dof_space = casmclex.DoFSpace(
+            dof_key=dof_key,
+            xtal_prim=prim.xtal_prim,
+            transformation_matrix_to_super=supercell.transformation_matrix_to_super,
+            basis=B,
+        )
+
+        irrep_data = [irrep.to_dict() for irrep in irrep_decomposition.irreps]
+        dof_space_data = dof_space.to_dict()
+        value = json.dumps(
+            dict(
+                irreps=irrep_data,
+                dof_space=dof_space_data,
+            ),
+            sort_keys=True,
+        )
+        lcache.store(cache="dof_spaces", key=key, value=value)
+    else:
+        data = json.loads(value)
+        irreps = [casmirreps.IrrepInfo.from_dict(d) for d in data["irreps"]]
+        dof_space = casmclex.DoFSpace.from_dict(
+            data=data["dof_space"],
+            xtal_prim=supercell.prim.xtal_prim,
+        )
+
+    return (irreps, dof_space)

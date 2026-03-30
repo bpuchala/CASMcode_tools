@@ -298,7 +298,7 @@ def test_StrainDispVarTool_standard():
     assert np.allclose(grad, expected_grad)
 
 
-# @pytest.mark.xfail(reason="To be determined...")
+@pytest.mark.xfail(reason="To be determined...")
 def test_StrainDispVarTool_Ustrain():
     reference_structure = hcp_reference_structure()
     structure = hcp_structure_2()

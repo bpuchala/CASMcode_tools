@@ -1,5 +1,8 @@
 """The casm-map program"""
 
+from ._EquivalentsInfo import (
+    EquivalentsInfo,
+)
 from ._StructureMappingSearch import (
     MappingSearchData,
     ParentVolumeSearchOptions,
