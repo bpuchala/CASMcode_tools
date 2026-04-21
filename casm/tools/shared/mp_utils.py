@@ -99,7 +99,7 @@ class MaterialsDocCache:
         material IDs in that request."""
 
         if cache_dir is None:
-            cache_dir = pathlib.Path.home() / ".casm" / "mp_cache"
+            cache_dir = pathlib.Path.home() / ".casmuser" / "mp_cache"
 
         self.cache_dir = cache_dir
         """pathlib.Path: The directory where cache files are stored."""
