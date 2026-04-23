@@ -1,0 +1,63 @@
+# {repo_name} ({package_name})
+
+## General notes
+
+- Do not include "Co-Authored-By" in commit messages.
+- Assume `CASM_PREFIX` is already set in the environment.
+
+## Available tools and skills
+
+- MCP server `superchivo` — search Python package docs
+- `/casm` — CASM suite overview and common workflow patterns
+- `/casm-version` — Version update checklist
+- `/casm-release` — Release procedure
+
+## Development workflow
+
+**Before testing new code, always install the package:**
+
+    pip install -v --no-build-isolation .
+
+This is required because the package has C++ extensions (pybind11 bindings). Without it, `pytest` will fail with `AttributeError` or `ImportError` on the compiled modules.
+
+**Run all Python tests:**
+
+    pytest -rsap -x python/tests
+
+**Format Python files:**
+
+    black python
+    ruff check --fix python
+
+**Format C++ files (staged only):**
+
+    ./stylize.sh
+
+**After adding new source files, update CMakeLists.txt:**
+
+    python make_CMakeLists.py
+
+**Update `CHANGELOG.md` when making commits.**
+
+## C++ tests
+
+```bash
+# Uninstall the Python package so its C++ library isn't used during testing
+pip uninstall {package_name}
+
+# Build and install the C++ library
+cmake -B build_cxx_only -DCMAKE_BUILD_TYPE=Release && cmake --build build_cxx_only -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu) --verbose && cmake --install build_cxx_only
+
+# Build and run C++ tests
+cmake -B build_cxx_test -DCMAKE_BUILD_TYPE=Release tests && cmake --build build_cxx_test -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu) --verbose && ctest --test-dir build_cxx_test
+# Log: build_cxx_test/Testing/Temporary/LastTest.log
+
+# Uninstall the C++ library when done
+xargs rm < build_cxx_only/install_manifest.txt
+```
+
+## Documentation
+
+```bash
+sphinx-build -b html python/doc $LIBCASM_PYDOCS/{docs_name}/2.0
+```

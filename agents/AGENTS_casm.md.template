@@ -1,0 +1,40 @@
+# {repo_name} ({package_name})
+
+## General notes
+
+- Do not include "Co-Authored-By" in commit messages.
+- Assume `CASM_PREFIX` is already set in the environment.
+
+## Available tools and skills
+
+- MCP server `superchivo` — search Python package docs
+- `/casm` — CASM suite overview and common workflow patterns
+- `/casm-version` — Version update checklist
+- `/casm-release` — Release procedure
+
+## Development workflow
+
+**Install the package:**
+
+    pip install .
+
+Or, for editable mode installation:
+
+    pip install -e .
+
+**Run all Python tests:**
+
+    pytest -rsap -x tests
+
+**Format Python files:**
+
+    black casm tests
+    ruff check --fix casm tests
+
+**Update `CHANGELOG.md` when making commits.**
+
+## Documentation
+
+```bash
+sphinx-build -b html doc $CASM_PYDOCS/{docs_name}/2.0
+```
