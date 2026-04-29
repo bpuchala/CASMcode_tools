@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `casm-convert`: New CLI tool for converting crystal structure files between
+  formats. Formats are inferred from file extensions (VASP POSCAR, CASM JSON,
+  or any format supported by ASE). Supports `-i`/`--input-format`,
+  `-o`/`--output-format`, and `-f`/`--force` options.
+
 ### Changed
 
 - Update libcasm-xtal dependency to `>=3.0a1`

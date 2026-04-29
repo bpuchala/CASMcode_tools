@@ -15,8 +15,8 @@ The casm-tools package provides command line programs based on capabilities impl
 in CASM. This includes:
 
 - casm-calc: Setup, run, and import results of structure calculations
-- casm-convert: [coming soon] Convert structures and configurations between CASM and
-  other formats (using `ASE <https://wiki.fysik.dtu.dk/ase/>`_).
+- casm-convert: Convert structures between CASM and other formats (using
+  `ASE <https://wiki.fysik.dtu.dk/ase/>`_).
 - casm-map: Structure mapping and import
 - casm.tools.shared: Helper functions for I/O, integrating with ASE, and context
   managers.
@@ -88,6 +88,12 @@ A suggested way to cite this program is as follows:
     3. J. C. Thomas, A. R. Natarajan, and A. Van der Ven, Comparing
         crystal structures with symmetry and geometry, npj
         Computational Materials, 7 (2021), 164.
+
+
+casm-convert
+------------
+
+The casm-convert command line program converts between the CASM structure JSON format, VASP POSCAR structure format, and if `ASE <https://wiki.fysik.dtu.dk/ase/>`_ is installed, any other structure format recognized by `ase.io`.
 
 
 About CASM

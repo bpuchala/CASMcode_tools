@@ -37,6 +37,7 @@ Homepage = "https://prisms-center.github.io/CASMcode_docs/"
 Repository = "https://github.com/prisms-center/CASMcode_tools"
 
 [project.scripts]
+casm-convert = "casm.tools.convert.commands.main:main"
 casm-map = "casm.tools.map.commands.main:main"
 casm-calc = "casm.tools.calc.commands.main:main"
 
