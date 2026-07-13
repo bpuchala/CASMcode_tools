@@ -9,6 +9,8 @@
 
 - MCP server `superchivo` — search Python package docs
 - `/casm` — CASM suite overview and common workflow patterns
+- `/casm-dev` - Developer's guide for CASM (libcasm packages and casm packages)
+- `/casm-notation` — CASM symmetry/group-theory notation, terminology, and math-symbol conventions
 - `/casm-version` — Version update checklist
 - `/casm-release` — Release procedure
 

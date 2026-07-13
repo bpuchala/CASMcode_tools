@@ -9,16 +9,18 @@
 
 - MCP server `superchivo` — search Python package docs
 - `/casm` — CASM suite overview and common workflow patterns
+- `/casm-dev` - Developer's guide for CASM (libcasm packages and casm packages)
+- `/casm-notation` — CASM symmetry/group-theory notation, terminology, and math-symbol conventions
 - `/casm-version` — Version update checklist
 - `/casm-release` — Release procedure
 
 ## Development workflow
 
-**Before testing new code, always install the package:**
+**Before testing, always (re)install the package:**
 
     pip install -v --no-build-isolation .
 
-This is required because the package has C++ extensions (pybind11 bindings). Without it, `pytest` will fail with `AttributeError` or `ImportError` on the compiled modules.
+Run this from the package root after *any* edit — including pure-Python edits under `python/libcasm/` — before `pytest` or `python -c` smoke tests. `pytest` imports the installed package, not the working tree, so un-reinstalled edits silently have no effect, and missing C++ extensions (pybind11 bindings) cause `AttributeError` or `ImportError`.
 
 **Run all Python tests:**
 

@@ -10,6 +10,7 @@ Agent and AI assistant configuration for CASM. These files are used to generate 
 | `AGENTS_casm.md.template` | Template for pure Python package repos |
 | `generate_libcasm_agents.py` | Generate `AGENTS.md` or `CLAUDE.md` for libcasm repos |
 | `generate_casm_agents.py` | Generate `AGENTS.md` or `CLAUDE.md` for casm repos |
+| `install_skills.py` | Install `skills/` into an AI tool's skills directory |
 | `skills/casm/` | On-demand skill: CASM concepts, APIs, and workflow patterns |
 | `skills/casm-dev/` | On-demand skill: CASM developer guide |
 | `skills/casm-version/` | On-demand skill: versioning checklist |
@@ -39,15 +40,22 @@ python generate_casm_agents.py
 
 ## Skills setup
 
-Copy skills to `~/.claude/skills/` (invoke with `/casm`, `/casm-dev`, `/casm-version`, `/casm-release`):
+Install the skills with `install_skills.py` (invoke with `/casm`, `/casm-dev`, `/casm-version`, `/casm-release`). Every `skills/<name>/` folder containing a `SKILL.md` is copied to the destination, replacing any existing copy.
+
+Run from `CASMcode_tools/agents/` (or anywhere using the full path):
 
 ```bash
-mkdir -p ~/.claude/skills
-cp -r agents/skills/casm ~/.claude/skills/casm
-cp -r agents/skills/casm-dev ~/.claude/skills/casm-dev
-cp -r agents/skills/casm-version ~/.claude/skills/casm-version
-cp -r agents/skills/casm-release ~/.claude/skills/casm-release
+# Shortcut options for common CLI AI tools
+python install_skills.py --claude     # ~/.claude/skills
+python install_skills.py --codex      # ~/.codex/skills
+python install_skills.py --gemini     # ~/.gemini/skills
+python install_skills.py --opencode   # ~/.config/opencode/skills
+
+# Any other tool / arbitrary directory
+python install_skills.py --dest ~/.config/other-tool/skills
 ```
+
+A destination is required (there is no default).
 
 ## Notes
 

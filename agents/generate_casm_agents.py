@@ -1,11 +1,11 @@
 """Generate AGENTS.md (or CLAUDE.md) for each casm-X repo from a shared template.
 
 Run from CASMcode_tools/agents/:
-    python generate_agents.py
-    python generate_agents.py --filename CLAUDE.md
+    python generate_casm_agents.py
+    python generate_casm_agents.py --filename CLAUDE.md
 
 Or from anywhere:
-    python ../CASMcode_tools/agents/generate_agents.py
+    python ../CASMcode_tools/agents/generate_casm_agents.py
 """
 
 import argparse
@@ -19,7 +19,9 @@ REPOS = [
 ]
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--filename", default="AGENTS.md", choices=["AGENTS.md", "CLAUDE.md"])
+parser.add_argument(
+    "--filename", default="AGENTS.md", choices=["AGENTS.md", "CLAUDE.md"]
+)
 args = parser.parse_args()
 
 agents_dir = pathlib.Path(__file__).parent

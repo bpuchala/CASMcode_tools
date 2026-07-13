@@ -24,7 +24,9 @@ REPOS = [
 ]
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--filename", default="AGENTS.md", choices=["AGENTS.md", "CLAUDE.md"])
+parser.add_argument(
+    "--filename", default="AGENTS.md", choices=["AGENTS.md", "CLAUDE.md"]
+)
 args = parser.parse_args()
 
 agents_dir = pathlib.Path(__file__).parent
