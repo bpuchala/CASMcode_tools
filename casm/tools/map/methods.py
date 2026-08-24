@@ -164,18 +164,6 @@ def make_mapped_child_superstructure(
     return xtal.make_structure_within(s)
 
 
-def _make_primitive_structure(init_structure: xtal.Structure):
-    xtal_prim = xtal.make_primitive_prim(
-        xtal.Prim.from_atom_coordinates(structure=init_structure)
-    )
-    prim_structure = xtal.Structure(
-        lattice=xtal_prim.lattice(),
-        atom_coordinate_frac=xtal_prim.coordinate_frac(),
-        atom_type=[occ[0] for occ in xtal_prim.occ_dof()],
-    )
-    return prim_structure
-
-
 def is_equivalent_chain(
     chain_A: list[xtal.Structure],
     chain_B: list[xtal.Structure],
@@ -272,7 +260,7 @@ def make_primitive_chain(
             structure_mapping=structure_mapping.interpolated(f),
             unmapped_structure=unmapped_structure,
         )
-        return _make_primitive_structure(xtal.make_structure_within(s))
+        return xtal.make_primitive_structure(xtal.make_structure_within(s))
 
     primitive_chain = []
     for f in f_chain:
@@ -528,7 +516,7 @@ def make_supercell_info(
     """
     info = {}
     T_int = supercell.transformation_matrix_to_super
-    info["volume"] = round(int(np.linalg.det(T_int)))
+    info["volume"] = int(round(np.linalg.det(T_int)))
     default_config = casmconfig.Configuration(supercell=supercell)
     symgroup = supercell.factor_group
     data = _get_symgroup_classification(
@@ -614,8 +602,19 @@ def make_child_supercell_info(
 def make_chain_info(
     chain: list[xtal.Structure],
     parent_prim: casmconfig.Prim,
+    is_primitive: bool = False,
 ):
     """Make a dictionary with information about the structures in a chain.
+
+    Notes
+    -----
+    Unless `is_primitive` is True, each structure in `chain` is made primitive, using
+    :func:`~libcasm.xtal.make_primitive_structure`, before its volume and symmetry are
+    determined. The results describe the crystal itself and do not depend on which
+    superstructure the interpolated structure happens to be expressed in, so an
+    equivalent chain of primitive structures, as from :func:`make_primitive_chain`,
+    gives the same results. Only atom coordinates and types are used; properties are
+    not considered.
 
     Parameters
     ----------
@@ -623,6 +622,11 @@ def make_chain_info(
         A chain of structures.
     parent_prim : casmconfig.Prim
         The parent structure, as a Prim.
+    is_primitive : bool = False
+        If True, the structures in `chain` are already primitive, as from
+        :func:`make_primitive_chain`, and are used as given. This is not checked: if
+        a structure is not primitive, the results describe the superstructure it is
+        expressed in and not the crystal.
 
     Returns
     -------
@@ -630,8 +634,10 @@ def make_chain_info(
         A ``list[dict]``, with one dictionary for each structure in the chain,
         including:
 
-        - volume: The volume of the structure relative to `parent_prim`.
-        - factor_group_size: The size of the factor group of the structure.
+        - volume: The volume of the primitive equivalent structure, relative to
+          `parent_prim`.
+        - factor_group_size: The size of the factor group of the primitive equivalent
+          structure.
         - spacegroup_type: The space group type of the structure, determined by spglib
           from the symmetry determined by CASM.
 
@@ -641,19 +647,24 @@ def make_chain_info(
     for structure in chain:
         info = {}
 
+        # Use the primitive equivalent structure so the results are independent of
+        # the superstructure the interpolated structure is expressed in
+        if is_primitive:
+            primitive_structure = structure
+        else:
+            primitive_structure = xtal.make_primitive_structure(structure)
+
         # Get the volume w.r.t. the prim of the interpolated structure
-        vol_structure = abs(structure.lattice().volume())
+        vol_structure = abs(primitive_structure.lattice().volume())
         info["volume"] = vol_structure / vol_parent
 
         # Get the space group of the interpolated structure
-        tmp_prim = casmconfig.Prim(
-            xtal_prim=xtal.Prim.from_atom_coordinates(structure=structure)
-        )
+        symgroup = sym_info.make_symgroup(primitive_structure)
         data = _get_symgroup_classification(
-            obj=tmp_prim,
-            symgroup=tmp_prim.factor_group,
+            obj=primitive_structure,
+            symgroup=symgroup,
         )
-        info["factor_group_size"] = len(tmp_prim.factor_group.elements)
+        info["factor_group_size"] = len(symgroup.elements)
 
         classification = data["group_classification"]
         if classification.get("spacegroup_type_from_casm_symmetry") is None:
