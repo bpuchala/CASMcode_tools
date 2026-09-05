@@ -51,7 +51,7 @@ Mathematical terms to avoid and preferred form:
 - "cohomologous" / "differ by a coboundary" / "gauge-equivalent" -> "equivalent up to a choice of basis or phase factor", or just "give the same irreps"
 - "gauge" / "gauge transformation" -> "a choice of phase factor"
 - "chain", "cochain", "cycle", "cocycle" -> avoid; describe the factor system or multiplier group directly instead
-- "TRIM" / "time-reversal invariant momentum" -> "a k-point where k = -k modulo a reciprocal lattice vector" (or "a real k-point"); for the negation, "a k-point where k != -k" rather than "non-TRIM"
+- "TRIM" / "time-reversal invariant momentum" -> "a k-point where k = -k modulo a reciprocal lattice vector"; for the negation, "a k-point where k != -k" rather than "non-TRIM"
 - "stabilizer" -> "invariant subgroup"
 
 Terms that may be used, but must be explained:

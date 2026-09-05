@@ -35,6 +35,11 @@ Or, for editable mode installation:
 
 **Update `CHANGELOG.md` when making commits.**
 
+The changelog records the difference between releases, not a log of commits.
+Add entries under `## [Unreleased]`, in the appropriate Keep a Changelog
+category, and only when the public API or behavior differs from the last
+release.
+
 ## Documentation
 
 ```bash
