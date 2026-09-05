@@ -41,6 +41,11 @@ Run this from the package root after *any* edit — including pure-Python edits 
 
 **Update `CHANGELOG.md` when making commits.**
 
+The changelog records the difference between releases, not a log of commits.
+Add entries under `## [Unreleased]`, in the appropriate Keep a Changelog
+category, and only when the public API or behavior differs from the last
+release.
+
 ## C++ tests
 
 ```bash
